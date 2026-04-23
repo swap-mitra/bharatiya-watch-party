@@ -6,8 +6,15 @@ import type { PlayerState, TrackCatalog } from './types';
 export const PLAYER_STATE_EVENT = 'player:state';
 export const PLAYER_TRACKS_EVENT = 'player:tracks';
 
+export interface BootstrapPayload {
+  state: PlayerState;
+  tracks: TrackCatalog;
+  backend: string;
+  backendWarning?: string | null;
+}
+
 export const tauriPlayer = {
-  bootstrap: () => invoke<{ state: PlayerState; tracks: TrackCatalog }>('bootstrap_player'),
+  bootstrap: () => invoke<BootstrapPayload>('bootstrap_player'),
   loadStream: (url: string) => invoke<PlayerState>('load_stream', { url }),
   play: () => invoke<PlayerState>('play'),
   pause: () => invoke<PlayerState>('pause'),

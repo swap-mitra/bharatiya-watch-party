@@ -116,10 +116,12 @@ async fn client_session(
     let welcome = match registry.connect(room_code.clone(), session_id, tx) {
         Ok(welcome) => welcome,
         Err(err) => {
-            let message = serde_json::to_string(&ServerMessage::Error {
-                code: "connect_failed".into(),
-                message: err.to_string(),
-            })
+            let message = serde_json::to_string(
+                &(ServerMessage::Error {
+                    code: "connect_failed".into(),
+                    message: err.to_string(),
+                }),
+            )
             .unwrap_or_else(|_| "{\"type\":\"error\"}".into());
             let _ = sender.send(Message::Text(message.into())).await;
             return;
@@ -177,7 +179,9 @@ async fn client_session(
                     );
                 }
             },
-            Message::Close(_) => break,
+            Message::Close(_) => {
+                break;
+            }
             Message::Ping(_) | Message::Pong(_) | Message::Binary(_) => {}
         }
     }
@@ -225,7 +229,7 @@ impl RoomRegistry {
                 participants: HashMap::from([(session_id, host)]),
                 playback: PlayerState::default(),
                 last_sequence: 0,
-                expires_at_ms: now_ms() + self.config.room_ttl.as_millis() as u64,
+                expires_at_ms: now_ms() + (self.config.room_ttl.as_millis() as u64),
             },
         );
 
@@ -544,7 +548,7 @@ impl RoomRecord {
     }
 
     fn touch(&mut self, ttl: Duration) {
-        self.expires_at_ms = now_ms() + ttl.as_millis() as u64;
+        self.expires_at_ms = now_ms() + (ttl.as_millis() as u64);
     }
 
     fn active_senders(&self) -> Vec<mpsc::UnboundedSender<ServerMessage>> {
@@ -596,8 +600,12 @@ fn apply_playback_command(mut state: PlayerState, command: &PlaybackCommand) -> 
             state.status = app_core::PlayerStatus::Loading;
             state.last_error = None;
         }
-        app_core::PlaybackAction::Play => state.status = app_core::PlayerStatus::Playing,
-        app_core::PlaybackAction::Pause => state.status = app_core::PlayerStatus::Paused,
+        app_core::PlaybackAction::Play => {
+            state.status = app_core::PlayerStatus::Playing;
+        }
+        app_core::PlaybackAction::Pause => {
+            state.status = app_core::PlayerStatus::Paused;
+        }
         app_core::PlaybackAction::Seek => {
             state.position_ms = command.position_ms.unwrap_or(state.position_ms);
         }

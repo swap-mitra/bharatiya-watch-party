@@ -24,6 +24,13 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - standard and theater layout modes
   - room chat panel
   - Tauri player command/event bridge
+- Sprint 3 native playback foundation with:
+  - `PlayerAdapter` contract in the shared Rust domain crate
+  - dynamic `libmpv` loading in the Tauri backend
+  - direct media loading, play, pause, seek, stop, and state polling
+  - audio track and subtitle track discovery and selection
+  - frontend bootstrap reporting for native vs mock backend mode
+  - development fallback harness when `libmpv` is not installed yet
 - CI for Rust and frontend checks
 
 ### Verified
@@ -34,18 +41,33 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - `npm run typecheck`
 - `npm run build --workspace @watchparty/desktop`
 
-## Current Gaps
+## Sprint Tracking
 
-- The desktop player still uses a harness/stub adapter; real `libmpv` integration is not implemented yet
-- Playback synchronization is command replication only; drift correction and late-join sync refinement are still pending
-- TURN/STUN, hosted fallback transport strategy, and deeper observability are not implemented yet
+- Sprint 1: complete
+- Sprint 2: complete
+- Sprint 3: implemented end to end in code
+  - Native playback uses `libmpv` when the shared library is available.
+  - If `libmpv` is missing, the desktop app falls back to the mock player harness and surfaces a warning in the UI.
 
-## Media Stack Decision
+## Native Playback Notes
 
 - Primary playback target: `libmpv`
 - Secondary media utility: `FFmpeg`
 
 `FFmpeg` is not the primary player runtime. It remains useful for probing, diagnostics, and future media tooling.
+
+The Tauri desktop backend will try to load `libmpv` from:
+- `MPV_LIBRARY_PATH` if set
+- Windows defaults such as `mpv-2.dll`, `libmpv-2.dll`, `mpv-1.dll`
+- macOS defaults such as `libmpv.2.dylib`, `libmpv.dylib`
+
+For full native playback on a collaborator machine, `libmpv` must be installed or bundled so the desktop app can load it at runtime.
+
+## Current Gaps
+
+- Playback synchronization is command replication only; drift correction and late-join sync refinement are still pending
+- TURN/STUN, hosted fallback transport strategy, and deeper observability are not implemented yet
+- Packaging and bundling of `libmpv` for distribution still needs to be finished for release builds
 
 ## Tracking Rule
 

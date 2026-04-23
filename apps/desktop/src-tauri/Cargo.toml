@@ -9,6 +9,7 @@ tauri-build = { workspace = true }
 [dependencies]
 app-core = { path = "../../../crates/app-core" }
 async-trait = { workspace = true }
+libloading = { workspace = true }
 parking_lot = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

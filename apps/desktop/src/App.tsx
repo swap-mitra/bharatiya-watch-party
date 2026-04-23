@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { createRoom, joinRoom, connectRoomSocket, sendEnvelope } from './lib/roomClient';
+import { connectRoomSocket, createRoom, joinRoom, sendEnvelope } from './lib/roomClient';
 import { onPlayerState, onPlayerTracks, tauriPlayer } from './lib/tauri';
 import type {
   ChatMessage,
@@ -56,15 +56,19 @@ export default function App() {
   const [joinName, setJoinName] = useState('Viewer');
   const [joinCode, setJoinCode] = useState('');
   const [roomError, setRoomError] = useState<string | null>(null);
+  const [playerBackend, setPlayerBackend] = useState('mock');
+  const [playerWarning, setPlayerWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selfReady, setSelfReady] = useState(false);
 
   useEffect(() => {
     tauriPlayer
       .bootstrap()
-      .then(({ state, tracks: initialCatalog }) => {
+      .then(({ state, tracks: initialCatalog, backend, backendWarning }) => {
         setPlayerState(state);
         setTracks(initialCatalog);
+        setPlayerBackend(backend);
+        setPlayerWarning(backendWarning ?? null);
       })
       .catch((error: unknown) => {
         pushEvent(`Bootstrap failed: ${String(error)}`);
@@ -387,6 +391,7 @@ export default function App() {
         <div className="topbar-meta">
           <span>Surface {surfaceState}</span>
           <span>{transportState === 'connected' ? 'Realtime linked' : 'Local mode'}</span>
+          <span>{playerBackend === 'libmpv' ? 'Native libmpv' : 'Mock player'}</span>
           <button
             type="button"
             className="ghost-button"
@@ -445,6 +450,7 @@ export default function App() {
               </section>
             </div>
 
+            {playerWarning ? <p className="status-banner warning">{playerWarning}</p> : null}
             {roomError ? <p className="status-banner error">{roomError}</p> : null}
           </section>
 
@@ -458,11 +464,11 @@ export default function App() {
               </ul>
             </div>
             <div className="landing-rail subtle">
-              <p className="eyebrow">Next build targets</p>
+              <p className="eyebrow">Playback backend</p>
               <ul className="feature-list compact-list">
-                <li>Real WebSocket-driven room sync loop</li>
-                <li>`libmpv` adapter instead of the current harness</li>
-                <li>Host-ready lobby behavior and drift correction</li>
+                <li>{playerBackend === 'libmpv' ? 'Native playback is available through libmpv' : 'Mock harness active until libmpv is installed'}</li>
+                <li>Native playback currently opens through mpv’s own window while the desktop shell controls it</li>
+                <li>Room and player contracts stay the same regardless of backend mode</li>
               </ul>
             </div>
           </aside>
@@ -481,7 +487,12 @@ export default function App() {
               <span>{readyCount} ready</span>
             </div>
             <div className="summary-actions">
-              <button type="button" className="ghost-button" onClick={toggleReady} disabled={transportState !== 'connected' || roomClosedReason !== null}>
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={toggleReady}
+                disabled={transportState !== 'connected' || roomClosedReason !== null}
+              >
                 {selfReady ? 'Set not ready' : 'Set ready'}
               </button>
               {roomClosedReason ? (
@@ -490,6 +501,7 @@ export default function App() {
             </div>
           </section>
 
+          {playerWarning ? <p className="status-banner warning">{playerWarning}</p> : null}
           {roomError ? <p className="status-banner error">{roomError}</p> : null}
 
           <section className="stage-panel">
@@ -652,7 +664,12 @@ export default function App() {
                   }}
                   disabled={transportState !== 'connected' || roomClosedReason !== null}
                 />
-                <button type="button" className="secondary" onClick={sendChatMessage} disabled={transportState !== 'connected'}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={sendChatMessage}
+                  disabled={transportState !== 'connected' || roomClosedReason !== null}
+                >
                   Send
                 </button>
               </footer>
@@ -672,6 +689,7 @@ export default function App() {
               <p className="eyebrow">Session detail</p>
               <p>{transportState === 'connected' ? 'Connected to signaling service' : 'Socket not attached'}</p>
               <p>{roomSession.role === 'host' ? 'Host authority enabled' : 'Viewer following host timeline'}</p>
+              <p>{playerBackend === 'libmpv' ? 'Playback opens through native libmpv' : 'Playback is running on the mock harness'}</p>
             </section>
           </footer>
         </main>
@@ -711,4 +729,3 @@ function deriveSurfaceState(
       return 'Lobby';
   }
 }
-
