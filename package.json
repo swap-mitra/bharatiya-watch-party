@@ -1,0 +1,14 @@
+{
+  "name": "bharatiya-watch-party",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/desktop"
+  ],
+  "scripts": {
+    "lint": "npm run lint --workspace @watchparty/desktop",
+    "typecheck": "npm run typecheck --workspace @watchparty/desktop",
+    "desktop:dev": "npm run tauri dev --workspace @watchparty/desktop",
+    "desktop:build": "npm run tauri build --workspace @watchparty/desktop"
+  }
+}

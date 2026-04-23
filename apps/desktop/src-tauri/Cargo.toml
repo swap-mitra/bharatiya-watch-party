@@ -1,0 +1,19 @@
+[package]
+name = "desktop-shell"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+tauri-build = { workspace = true }
+
+[dependencies]
+app-core = { path = "../../../crates/app-core" }
+async-trait = { workspace = true }
+parking_lot = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tauri = { workspace = true, features = [] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+url = { workspace = true }

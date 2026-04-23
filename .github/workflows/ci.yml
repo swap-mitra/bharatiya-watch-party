@@ -1,0 +1,75 @@
+# Realtime Protocol Spec
+
+## Room Authority
+
+- Host is authoritative for playback state
+- Viewers may send presence, readiness, and chat events
+- Viewer playback mutation attempts must be rejected
+
+## Core Messages
+
+### Client to Server
+
+- Ping
+- ReadyState
+- ChatSend
+- PlaybackCommand
+
+### Server to Client
+
+- Welcome
+- Presence
+- Chat
+- Playback
+- Error
+- RoomClosed
+
+## Ordering
+
+- Playback commands carry a monotonic sequence number
+- Consumers ignore stale sequence numbers
+- Reconnect must preserve the last known session identity when the session token is valid
+
+## Lifecycle
+
+- Host creates room through HTTP
+- Each participant establishes a WebSocket session with a previously issued session token
+- Disconnect removes the participant from presence
+- Host disconnect closes the room and broadcasts RoomClosed
+"@ | Set-Content -NoNewline docs/specs/03-realtime-protocol-spec.md
+
+@"
+name: CI
+
+on:
+  push:
+    branches: ["main", "codex/**"]
+  pull_request:
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --workspace
+
+  desktop:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install
+        run: npm ci
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Lint
+        run: npm run lint
