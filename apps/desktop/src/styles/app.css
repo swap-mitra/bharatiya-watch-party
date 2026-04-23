@@ -462,3 +462,59 @@ select {
     grid-template-columns: 1fr;
   }
 }
+
+a {
+  color: inherit;
+}
+
+button.ghost-danger {
+  background: rgba(243, 141, 141, 0.12);
+  color: var(--danger);
+  border-color: rgba(243, 141, 141, 0.38);
+}
+
+.surface-callout {
+  border: 1px solid var(--line);
+  border-radius: 24px;
+  padding: 1rem 1.15rem;
+  background: linear-gradient(180deg, rgba(15, 18, 24, 0.9), rgba(10, 13, 18, 0.96));
+}
+
+.surface-callout h3,
+.surface-callout p {
+  margin: 0;
+}
+
+.surface-callout h3 {
+  margin-top: 0.2rem;
+  margin-bottom: 0.45rem;
+  font-size: 1.05rem;
+}
+
+.surface-callout p {
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.compact-state {
+  width: min(100%, 560px);
+}
+
+.inline-actions {
+  display: flex;
+  gap: 0.75rem;
+  margin-top: 0.85rem;
+}
+
+.lobby-state {
+  border-color: rgba(136, 169, 255, 0.22);
+}
+
+.reconnecting-state {
+  border-color: rgba(226, 163, 58, 0.28);
+}
+
+.closed-state,
+.error-state {
+  border-color: rgba(243, 141, 141, 0.28);
+}

@@ -143,6 +143,75 @@ async fn host_disconnect_closes_the_room() {
 }
 
 #[tokio::test]
+async fn host_can_close_room_explicitly() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let joined = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, mut host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), joined.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &created.session_id,
+            ClientMessage::CloseRoom,
+        )
+        .expect("host should be able to close the room");
+
+    let host_closed = recv_until(&mut host_rx, |message| {
+        matches!(
+            message,
+            ServerMessage::RoomClosed {
+                reason: RoomCloseReason::ClosedByHost
+            }
+        )
+    })
+    .await
+    .expect("host should receive room closed");
+    let viewer_closed = recv_until(&mut viewer_rx, |message| {
+        matches!(
+            message,
+            ServerMessage::RoomClosed {
+                reason: RoomCloseReason::ClosedByHost
+            }
+        )
+    })
+    .await
+    .expect("viewer should receive room closed");
+
+    assert_eq!(
+        host_closed,
+        ServerMessage::RoomClosed {
+            reason: RoomCloseReason::ClosedByHost,
+        }
+    );
+    assert_eq!(
+        viewer_closed,
+        ServerMessage::RoomClosed {
+            reason: RoomCloseReason::ClosedByHost,
+        }
+    );
+}
+
+#[tokio::test]
 async fn reconnect_uses_the_same_session_id() {
     let registry = RoomRegistry::new(ServiceConfig::default());
     let created = registry

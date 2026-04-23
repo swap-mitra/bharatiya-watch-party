@@ -16,7 +16,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Rust workspace scaffold with shared domain crate, signaling service, and Tauri desktop shell
 - Source-controlled specs in `docs/specs/00` through `docs/specs/18`
 - Room creation and join over HTTP
-- WebSocket room attachment, presence updates, readiness updates, chat, and host-authoritative playback commands
+- WebSocket room attachment, presence updates, readiness updates, chat, host-authoritative playback commands, and explicit host room closure
 - Desktop watch-party shell with:
   - create room flow
   - join room flow
@@ -31,6 +31,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - audio track and subtitle track discovery and selection
   - frontend bootstrap reporting for native vs mock backend mode
   - development fallback harness when `libmpv` is not installed yet
+- Reconnect-aware desktop room experience with dedicated lobby, reconnecting, and closed-room surfaces
 - CI for Rust and frontend checks
 
 ### Verified
@@ -63,9 +64,17 @@ The Tauri desktop backend will try to load `libmpv` from:
 
 For full native playback on a collaborator machine, `libmpv` must be installed or bundled so the desktop app can load it at runtime.
 
+If `libmpv` is missing on Windows, the desktop app will show a warning like `LoadLibraryExW failed` and fall back to the mock harness. That does not block room creation or signaling.
+
+## Local Development Notes
+
+- Start the signaling service with `cargo run -p signal-service` before creating or joining rooms.
+- The signal service now allows local desktop/webview origins for development on `localhost:1420` and `127.0.0.1:1420`.
+- If room actions fail with `Could not reach the signal service`, verify that port `4000` is free and the backend is listening on `http://127.0.0.1:4000`.
+
 ## Current Gaps
 
-- Playback synchronization is command replication only; drift correction and late-join sync refinement are still pending
+- Playback synchronization is still command replication only; drift correction and late-join sync refinement are still pending
 - TURN/STUN, hosted fallback transport strategy, and deeper observability are not implemented yet
 - Packaging and bundling of `libmpv` for distribution still needs to be finished for release builds
 
@@ -77,3 +86,7 @@ This README should be updated whenever implementation meaningfully changes so th
 
 - `00` to `08`: foundation, protocol, backend, UI, observability, and tests
 - `09` to `18`: room UX, `libmpv`, reconnects, sync correction, chat/presence, networking, observability implementation, performance, packaging, and QA/release acceptance
+
+
+
+

@@ -32,11 +32,16 @@ const initialPlayerState: PlayerState = {
 };
 
 const initialTracks: TrackCatalog = { audio: [], subtitles: [] };
+const MAX_RECONNECT_ATTEMPTS = 5;
+const RECONNECT_BASE_DELAY_MS = 1500;
 
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualCloseRef = useRef(false);
   const nextSeqRef = useRef(1);
+  const roomSessionRef = useRef<RoomSession | null>(null);
+  const roomClosedReasonRef = useRef<RoomCloseReason | null>(null);
 
   const [playerState, setPlayerState] = useState<PlayerState>(initialPlayerState);
   const [tracks, setTracks] = useState<TrackCatalog>(initialTracks);
@@ -60,6 +65,14 @@ export default function App() {
   const [playerWarning, setPlayerWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selfReady, setSelfReady] = useState(false);
+
+  useEffect(() => {
+    roomSessionRef.current = roomSession;
+  }, [roomSession]);
+
+  useEffect(() => {
+    roomClosedReasonRef.current = roomClosedReason;
+  }, [roomClosedReason]);
 
   useEffect(() => {
     tauriPlayer
@@ -86,9 +99,12 @@ export default function App() {
     ]);
 
     return () => {
-      manualCloseRef.current = true;
-      socketRef.current?.close();
-      socketRef.current = null;
+      clearReconnectTimer();
+      if (socketRef.current) {
+        manualCloseRef.current = true;
+        socketRef.current.close();
+        socketRef.current = null;
+      }
       void unlisten.then((handlers) => handlers.forEach((handler) => handler()));
     };
   }, []);
@@ -96,15 +112,17 @@ export default function App() {
   const isHost = roomSession?.role === 'host';
   const participantCount = roomSnapshot?.participants.length ?? 0;
   const readyCount = roomSnapshot?.participants.filter((participant) => participant.ready).length ?? 0;
-  const viewerCount =
-    roomSnapshot?.participants.filter((participant) => participant.role === 'viewer').length ?? 0;
-  const canOperatePlayer = !roomSession || isHost;
+  const viewerCount = roomSnapshot?.participants.filter((participant) => participant.role === 'viewer').length ?? 0;
+  const roomInteractive = transportState === 'connected' && roomClosedReason === null;
+  const canOperatePlayer = !roomSession || (isHost && roomInteractive);
+  const canSendChat = roomInteractive;
   const subtitleValue = playerState.selectedSubtitleTrack ?? 'none';
   const statusLabel = useMemo(
     () => playerState.status.replace(/(^\w)/, (letter) => letter.toUpperCase()),
     [playerState.status],
   );
   const surfaceState = deriveSurfaceState(roomSession, transportState, roomClosedReason, playerState.status);
+  const roomErrorTitle = roomError ? deriveRoomErrorTitle(roomError) : null;
 
   async function handleCreateRoom() {
     if (!createName.trim()) {
@@ -116,9 +134,8 @@ export default function App() {
     setRoomError(null);
     try {
       const response = await createRoom(createName.trim());
-      setChatMessages([]);
       pushEvent(`Room ${response.roomCode} created`);
-      connectSocket(response);
+      openSocket(buildRoomSession(response));
     } catch (error) {
       setRoomError(String(error));
     } finally {
@@ -136,9 +153,8 @@ export default function App() {
     setRoomError(null);
     try {
       const response = await joinRoom(joinCode.trim().toUpperCase(), joinName.trim());
-      setChatMessages([]);
       pushEvent(`Joining room ${response.roomCode}`);
-      connectSocket(response, response.room);
+      openSocket(buildRoomSession(response), { initialRoom: response.room });
     } catch (error) {
       setRoomError(String(error));
     } finally {
@@ -146,35 +162,44 @@ export default function App() {
     }
   }
 
-  function connectSocket(session: CreateRoomResponse | JoinRoomResponse, initialRoom?: RoomSnapshot) {
-    manualCloseRef.current = true;
-    socketRef.current?.close();
-    manualCloseRef.current = false;
+  function openSocket(
+    session: RoomSession,
+    options?: { initialRoom?: RoomSnapshot; preserveState?: boolean; reconnectAttempt?: number },
+  ) {
+    clearReconnectTimer();
+    closeSocketSilently();
 
-    const nextSession: RoomSession = {
-      roomCode: session.roomCode,
-      sessionId: session.sessionId,
-      role: session.role,
-      maxViewers: session.maxViewers,
-    };
+    const preserveState = options?.preserveState ?? false;
+    const reconnectAttempt = options?.reconnectAttempt ?? 0;
 
-    nextSeqRef.current = 1;
-    setRoomSession(nextSession);
-    setRoomSnapshot(initialRoom ?? null);
-    setSelfReady(false);
-    setRoomClosedReason(null);
-    setTransportState('connecting');
+    if (!preserveState) {
+      setRoomSession(session);
+      setRoomSnapshot(options?.initialRoom ?? null);
+      setChatMessages([]);
+      setSelfReady(false);
+      setRoomClosedReason(null);
+      roomClosedReasonRef.current = null;
+      nextSeqRef.current = 1;
+    }
+
     setRoomError(null);
+    setTransportState(reconnectAttempt > 0 ? 'reconnecting' : 'connecting');
 
-    const socket = connectRoomSocket(nextSession);
+    const socket = connectRoomSocket(session);
     socketRef.current = socket;
 
     socket.onopen = () => {
+      if (socketRef.current !== socket) {
+        return;
+      }
       setTransportState('connected');
-      pushEvent(`Connected to room ${nextSession.roomCode}`);
+      pushEvent(reconnectAttempt > 0 ? `Reconnected to room ${session.roomCode}` : `Connected to room ${session.roomCode}`);
     };
 
     socket.onmessage = (event) => {
+      if (socketRef.current !== socket) {
+        return;
+      }
       try {
         const message = JSON.parse(event.data as string) as ServerEnvelope;
         void handleServerEnvelope(message);
@@ -184,30 +209,80 @@ export default function App() {
     };
 
     socket.onerror = () => {
-      pushEvent('Room socket error');
+      if (socketRef.current === socket) {
+        pushEvent('Room socket error');
+      }
     };
 
     socket.onclose = () => {
+      if (socketRef.current !== socket) {
+        return;
+      }
       socketRef.current = null;
       if (manualCloseRef.current) {
         manualCloseRef.current = false;
         return;
       }
-      setTransportState('closed');
-      pushEvent('Room connection closed');
+      if (roomClosedReasonRef.current) {
+        setTransportState('closed');
+        return;
+      }
+      scheduleReconnect(session, reconnectAttempt + 1);
     };
+  }
+
+  function scheduleReconnect(session: RoomSession, attempt: number) {
+    if (attempt > MAX_RECONNECT_ATTEMPTS) {
+      setTransportState('closed');
+      setRoomError('Connection lost. The room session could not be restored.');
+      pushEvent('Reconnect attempts exhausted');
+      return;
+    }
+
+    setTransportState('reconnecting');
+    pushEvent(`Reconnect attempt ${attempt}/${MAX_RECONNECT_ATTEMPTS}`);
+    reconnectTimerRef.current = setTimeout(() => {
+      if (roomSessionRef.current?.sessionId !== session.sessionId) {
+        return;
+      }
+      openSocket(session, { preserveState: true, reconnectAttempt: attempt });
+    }, RECONNECT_BASE_DELAY_MS * attempt);
+  }
+
+  function clearReconnectTimer() {
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }
+
+  function closeSocketSilently() {
+    clearReconnectTimer();
+    if (socketRef.current) {
+      manualCloseRef.current = true;
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+  }
+
+  function applyRoomSnapshot(snapshot: RoomSnapshot) {
+    setRoomSnapshot(snapshot);
+    const selfParticipant = roomSessionRef.current
+      ? snapshot.participants.find((participant) => participant.sessionId === roomSessionRef.current?.sessionId)
+      : undefined;
+    setSelfReady(selfParticipant?.ready ?? false);
   }
 
   async function handleServerEnvelope(message: ServerEnvelope) {
     switch (message.type) {
       case 'welcome': {
-        setRoomSnapshot(message.payload.room);
+        applyRoomSnapshot(message.payload.room);
         await syncPlayerFromSnapshot(message.payload.playback);
         pushEvent(`Presence synced for ${message.payload.room.roomCode}`);
         return;
       }
       case 'presence': {
-        setRoomSnapshot(message.payload);
+        applyRoomSnapshot(message.payload);
         return;
       }
       case 'chat': {
@@ -228,9 +303,12 @@ export default function App() {
         return;
       }
       case 'room_closed': {
+        clearReconnectTimer();
         setRoomClosedReason(message.payload.reason);
+        roomClosedReasonRef.current = message.payload.reason;
         setTransportState('closed');
-        pushEvent(`Room closed: ${message.payload.reason.replace(/_/g, ' ')}`);
+        pushEvent(`Room closed: ${formatCloseReason(message.payload.reason)}`);
+        closeSocketSilently();
         return;
       }
       default:
@@ -363,14 +441,23 @@ export default function App() {
     }
   }
 
+  function handleCloseRoom() {
+    try {
+      sendEnvelope(socketRef.current, { type: 'close_room' });
+      pushEvent('Host requested room closure');
+    } catch (error) {
+      setRoomError(String(error));
+    }
+  }
+
   function leaveRoom() {
-    manualCloseRef.current = true;
-    socketRef.current?.close();
-    socketRef.current = null;
+    closeSocketSilently();
     setRoomSession(null);
+    roomSessionRef.current = null;
     setRoomSnapshot(null);
     setTransportState('idle');
     setRoomClosedReason(null);
+    roomClosedReasonRef.current = null;
     setChatMessages([]);
     setSelfReady(false);
     setRoomError(null);
@@ -390,7 +477,7 @@ export default function App() {
         </div>
         <div className="topbar-meta">
           <span>Surface {surfaceState}</span>
-          <span>{transportState === 'connected' ? 'Realtime linked' : 'Local mode'}</span>
+          <span>{describeTransportState(transportState)}</span>
           <span>{playerBackend === 'libmpv' ? 'Native libmpv' : 'Mock player'}</span>
           <button
             type="button"
@@ -413,7 +500,8 @@ export default function App() {
             <p className="eyebrow">Private rooms, direct streams, tight sync</p>
             <h2>Create a room or step into one with a short code.</h2>
             <p className="lead-copy">
-              The desktop shell is now wired for room lifecycle, host-controlled playback, readiness, and text chat.
+              The desktop shell now covers room lifecycle, host-controlled playback, reconnect handling, readiness,
+              and text chat.
             </p>
 
             <div className="split-actions">
@@ -451,22 +539,31 @@ export default function App() {
             </div>
 
             {playerWarning ? <p className="status-banner warning">{playerWarning}</p> : null}
-            {roomError ? <p className="status-banner error">{roomError}</p> : null}
+            {roomError ? (
+              <section className="surface-callout error-state compact-state">
+                <p className="eyebrow">{roomErrorTitle}</p>
+                <h3>{roomError}</h3>
+              </section>
+            ) : null}
           </section>
 
           <aside className="landing-side">
             <div className="landing-rail">
               <p className="eyebrow">Current foundation</p>
               <ul className="feature-list">
-                <li>Rust room service with host authority and viewer limits</li>
-                <li>Tauri player bridge ready for real `libmpv` integration</li>
-                <li>Live room shell with chat, presence, and theater layout</li>
+                <li>Rust room service with host authority, explicit room closure, and viewer limits</li>
+                <li>Tauri desktop shell with reconnect-aware room state and a native player bridge</li>
+                <li>Live room experience with lobby, chat, readiness, and theater layout</li>
               </ul>
             </div>
             <div className="landing-rail subtle">
               <p className="eyebrow">Playback backend</p>
               <ul className="feature-list compact-list">
-                <li>{playerBackend === 'libmpv' ? 'Native playback is available through libmpv' : 'Mock harness active until libmpv is installed'}</li>
+                <li>
+                  {playerBackend === 'libmpv'
+                    ? 'Native playback is available through libmpv'
+                    : 'Mock harness active until libmpv is installed'}
+                </li>
                 <li>Native playback currently opens through mpv’s own window while the desktop shell controls it</li>
                 <li>Room and player contracts stay the same regardless of backend mode</li>
               </ul>
@@ -487,22 +584,34 @@ export default function App() {
               <span>{readyCount} ready</span>
             </div>
             <div className="summary-actions">
-              <button
-                type="button"
-                className="ghost-button"
-                onClick={toggleReady}
-                disabled={transportState !== 'connected' || roomClosedReason !== null}
-              >
+              <button type="button" className="ghost-button" onClick={toggleReady} disabled={!roomInteractive}>
                 {selfReady ? 'Set not ready' : 'Set ready'}
               </button>
-              {roomClosedReason ? (
-                <span className="status-banner warning">Room closed: {roomClosedReason.replace(/_/g, ' ')}</span>
+              {isHost ? (
+                <button type="button" className="ghost-danger" onClick={handleCloseRoom} disabled={!roomInteractive}>
+                  End room
+                </button>
               ) : null}
             </div>
           </section>
 
           {playerWarning ? <p className="status-banner warning">{playerWarning}</p> : null}
           {roomError ? <p className="status-banner error">{roomError}</p> : null}
+
+          {surfaceState !== 'Playing' && surfaceState !== 'Buffering' && surfaceState !== 'Loading' ? (
+            <section className={`surface-callout ${surfaceState.toLowerCase()}-state`}>
+              <p className="eyebrow">{surfaceState}</p>
+              <h3>{surfaceHeadline(surfaceState, isHost, roomClosedReason)}</h3>
+              <p>{surfaceCopy(surfaceState, isHost, readyCount, participantCount, roomClosedReason)}</p>
+              {surfaceState === 'Closed' ? (
+                <div className="inline-actions">
+                  <button type="button" onClick={leaveRoom}>
+                    Back to home
+                  </button>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
 
           <section className="stage-panel">
             <div className="player-panel">
@@ -526,13 +635,15 @@ export default function App() {
                   </div>
                   <div>
                     <p className="stage-label">Tracks</p>
-                    <p className="stage-value">{tracks.audio.length} audio / {tracks.subtitles.length} subtitle</p>
+                    <p className="stage-value">
+                      {tracks.audio.length} audio / {tracks.subtitles.length} subtitle
+                    </p>
                   </div>
                 </div>
                 <p className="stage-note">
                   {isHost
-                    ? 'Host commands replicate through the room socket. Viewers mirror playback and keep chat live beside the stage.'
-                    : 'Viewer mode follows host-issued playback commands. Local controls stay read-only inside the room.'}
+                    ? 'Host commands replicate through the room socket. Viewers mirror playback and can stay in the lobby until you start.'
+                    : 'Viewer mode follows host-issued playback commands. Local playback controls stay read-only inside the room.'}
                 </p>
               </div>
 
@@ -626,10 +737,10 @@ export default function App() {
                   <div key={participant.sessionId} className="presence-row">
                     <div>
                       <strong>{participant.displayName}</strong>
-                      <p>{participant.role === 'host' ? 'Host' : 'Viewer'}</p>
+                      <p>{participant.role === 'host' ? 'Host' : participant.connected ? 'Viewer' : 'Viewer offline'}</p>
                     </div>
                     <span className={`presence-chip ${participant.ready ? 'ready' : 'waiting'}`}>
-                      {participant.ready ? 'Ready' : 'Waiting'}
+                      {participant.ready ? 'Ready' : participant.connected ? 'Waiting' : 'Offline'}
                     </span>
                   </div>
                 ))}
@@ -639,7 +750,11 @@ export default function App() {
                 {chatMessages.length === 0 ? (
                   <article>
                     <strong>Room chat</strong>
-                    <p>Messages from the room will appear here once the socket is active.</p>
+                    <p>
+                      {surfaceState === 'Lobby'
+                        ? 'Use chat while the room is getting ready.'
+                        : 'Messages from the room will appear here once the socket is active.'}
+                    </p>
                   </article>
                 ) : (
                   chatMessages.map((message) => (
@@ -662,14 +777,9 @@ export default function App() {
                       sendChatMessage();
                     }
                   }}
-                  disabled={transportState !== 'connected' || roomClosedReason !== null}
+                  disabled={!canSendChat}
                 />
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={sendChatMessage}
-                  disabled={transportState !== 'connected' || roomClosedReason !== null}
-                >
+                <button type="button" className="secondary" onClick={sendChatMessage} disabled={!canSendChat}>
                   Send
                 </button>
               </footer>
@@ -687,7 +797,7 @@ export default function App() {
             </section>
             <section>
               <p className="eyebrow">Session detail</p>
-              <p>{transportState === 'connected' ? 'Connected to signaling service' : 'Socket not attached'}</p>
+              <p>{describeTransportState(transportState)}</p>
               <p>{roomSession.role === 'host' ? 'Host authority enabled' : 'Viewer following host timeline'}</p>
               <p>{playerBackend === 'libmpv' ? 'Playback opens through native libmpv' : 'Playback is running on the mock harness'}</p>
             </section>
@@ -696,6 +806,15 @@ export default function App() {
       )}
     </div>
   );
+}
+
+function buildRoomSession(session: CreateRoomResponse | JoinRoomResponse): RoomSession {
+  return {
+    roomCode: session.roomCode,
+    sessionId: session.sessionId,
+    role: session.role,
+    maxViewers: session.maxViewers,
+  };
 }
 
 function deriveSurfaceState(
@@ -707,11 +826,12 @@ function deriveSurfaceState(
   if (roomClosedReason || transportState === 'closed') {
     return 'Closed';
   }
-
+  if (transportState === 'reconnecting') {
+    return 'Reconnecting';
+  }
   if (transportState === 'connecting') {
     return 'Joining';
   }
-
   if (!roomSession) {
     return 'Disconnected';
   }
@@ -723,9 +843,91 @@ function deriveSurfaceState(
       return 'Playing';
     case 'buffering':
       return 'Buffering';
-    case 'error':
-      return 'Reconnecting';
     default:
       return 'Lobby';
   }
 }
+
+function formatCloseReason(reason: RoomCloseReason): string {
+  switch (reason) {
+    case 'closed_by_host':
+      return 'closed by host';
+    case 'expired':
+      return 'expired';
+    case 'host_disconnected':
+      return 'host disconnected';
+    default:
+      return String(reason).replace(/_/g, ' ');
+  }
+}
+
+function describeTransportState(transportState: TransportState): string {
+  switch (transportState) {
+    case 'connected':
+      return 'Realtime linked';
+    case 'connecting':
+      return 'Joining room';
+    case 'reconnecting':
+      return 'Reconnecting to room';
+    case 'closed':
+      return 'Room connection closed';
+    default:
+      return 'Local mode';
+  }
+}
+
+function deriveRoomErrorTitle(message: string): string {
+  const normalized = message.toLowerCase();
+  if (normalized.includes('full')) {
+    return 'Room full';
+  }
+  if (normalized.includes('not found')) {
+    return 'Invalid room code';
+  }
+  if (normalized.includes('stream')) {
+    return 'Invalid stream';
+  }
+  return 'Room issue';
+}
+
+function surfaceHeadline(
+  surfaceState: RoomSurfaceState,
+  isHost: boolean,
+  roomClosedReason: RoomCloseReason | null,
+): string {
+  switch (surfaceState) {
+    case 'Lobby':
+      return isHost ? 'Room is open and waiting for the host to start playback.' : 'You are in the lobby waiting for the host timeline.';
+    case 'Reconnecting':
+      return 'Trying to restore the room session.';
+    case 'Closed':
+      return roomClosedReason ? `This room was ${formatCloseReason(roomClosedReason)}.` : 'This room session is no longer active.';
+    default:
+      return `${surfaceState} state active.`;
+  }
+}
+
+function surfaceCopy(
+  surfaceState: RoomSurfaceState,
+  isHost: boolean,
+  readyCount: number,
+  participantCount: number,
+  roomClosedReason: RoomCloseReason | null,
+): string {
+  switch (surfaceState) {
+    case 'Lobby':
+      return isHost
+        ? `${readyCount} of ${participantCount} participants are marked ready. Load a direct stream and start when you want.`
+        : `${readyCount} of ${participantCount} participants are ready. Chat stays live while you wait for playback.`;
+    case 'Reconnecting':
+      return 'The desktop client keeps your room context and will retry with the same session id before falling back to a closed state.';
+    case 'Closed':
+      return roomClosedReason === 'closed_by_host'
+        ? 'The host ended the room for every participant.'
+        : 'Leave this session to return to the home screen and join or create a new room.';
+    default:
+      return 'The room surface is transitioning.';
+  }
+}
+
+

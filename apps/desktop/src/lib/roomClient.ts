@@ -11,13 +11,20 @@ const SIGNAL_WS_BASE =
   (import.meta.env.VITE_SIGNAL_SERVICE_WS_URL as string | undefined) ?? 'ws://127.0.0.1:4000';
 
 async function postJson<TResponse>(path: string, body: object): Promise<TResponse> {
-  const response = await fetch(`${SIGNAL_HTTP_BASE}${path}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(`${SIGNAL_HTTP_BASE}${path}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(body),
+    });
+  } catch (error) {
+    throw new Error(
+      `Could not reach the signal service at ${SIGNAL_HTTP_BASE}. Make sure \`cargo run -p signal-service\` is running and local requests are allowed. Original error: ${String(error)}`,
+    );
+  }
 
   if (!response.ok) {
     let message = `Request failed with ${response.status}`;
@@ -61,3 +68,4 @@ export function sendEnvelope(socket: WebSocket | null, envelope: ClientEnvelope)
 
   socket.send(JSON.stringify(envelope));
 }
+

@@ -91,6 +91,7 @@ pub enum ClientMessage {
     ReadyState { ready: bool },
     ChatSend { text: String },
     PlaybackCommand(PlaybackCommand),
+    CloseRoom,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

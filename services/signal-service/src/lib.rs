@@ -15,7 +15,7 @@ use axum::{
         Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::StatusCode,
+    http::{HeaderValue, Method, StatusCode},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -23,6 +23,7 @@ use futures::{sink::SinkExt, stream::StreamExt};
 use parking_lot::RwLock;
 use serde::Deserialize;
 use tokio::sync::mpsc;
+use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 const DEFAULT_ROOM_TTL_SECONDS: u64 = 60 * 60 * 4;
@@ -59,11 +60,22 @@ impl AppState {
 }
 
 pub fn app_router(state: AppState) -> Router {
+    let cors = CorsLayer::new()
+        .allow_origin([
+            HeaderValue::from_static("http://localhost:1420"),
+            HeaderValue::from_static("http://127.0.0.1:1420"),
+            HeaderValue::from_static("tauri://localhost"),
+            HeaderValue::from_static("https://tauri.localhost"),
+        ])
+        .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
+        .allow_headers(Any);
+
     Router::new()
         .route("/health", get(healthcheck))
         .route("/api/rooms", post(create_room))
         .route("/api/rooms/{room_code}/join", post(join_room))
         .route("/ws", get(ws_handler))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -360,6 +372,7 @@ impl RoomRegistry {
     ) -> AppResult<()> {
         match message {
             ClientMessage::Ping => Ok(()),
+            ClientMessage::CloseRoom => self.close_room(room_code, session_id),
             ClientMessage::ReadyState { ready } => {
                 let snapshot = {
                     let mut rooms = self.rooms.write();
@@ -435,6 +448,29 @@ impl RoomRegistry {
                 Ok(())
             }
         }
+    }
+
+    pub fn close_room(&self, room_code: &RoomCode, session_id: &SessionId) -> AppResult<()> {
+        let senders = {
+            let rooms = self.rooms.write();
+            let room = rooms.get(room_code).ok_or(AppError::RoomNotFound)?;
+            if room.host_session_id != *session_id {
+                return Err(AppError::Unauthorized);
+            }
+            room.active_senders()
+        };
+        {
+            let mut rooms = self.rooms.write();
+            rooms.remove(room_code);
+        }
+
+        for sender in senders {
+            let _ = sender.send(ServerMessage::RoomClosed {
+                reason: RoomCloseReason::ClosedByHost,
+            });
+        }
+
+        Ok(())
     }
 
     pub fn send_to(&self, room_code: &RoomCode, session_id: &SessionId, message: ServerMessage) {

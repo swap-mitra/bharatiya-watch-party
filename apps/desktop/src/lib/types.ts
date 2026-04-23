@@ -11,7 +11,7 @@ export type MediaTrackKind = 'audio' | 'subtitle';
 export type ParticipantRole = 'host' | 'viewer';
 export type PlaybackAction = 'load_stream' | 'play' | 'pause' | 'seek' | 'stop';
 export type RoomCloseReason = 'host_disconnected' | 'expired' | 'closed_by_host';
-export type TransportState = 'idle' | 'connecting' | 'connected' | 'closed';
+export type TransportState = 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'closed';
 
 export interface MediaTrack {
   id: string;
@@ -89,7 +89,8 @@ export type ClientEnvelope =
   | { type: 'ping' }
   | { type: 'ready_state'; payload: { ready: boolean } }
   | { type: 'chat_send'; payload: { text: string } }
-  | { type: 'playback_command'; payload: PlaybackCommand };
+  | { type: 'playback_command'; payload: PlaybackCommand }
+  | { type: 'close_room' };
 
 export type ServerEnvelope =
   | {
