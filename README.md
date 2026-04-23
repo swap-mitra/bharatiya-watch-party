@@ -14,7 +14,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 ### Implemented
 
 - Rust workspace scaffold with shared domain crate, signaling service, and Tauri desktop shell
-- Source-controlled specs in `docs/specs/00` through `docs/specs/08`
+- Source-controlled specs in `docs/specs/00` through `docs/specs/18`
 - Room creation and join over HTTP
 - WebSocket room attachment, presence updates, readiness updates, chat, and host-authoritative playback commands
 - Desktop watch-party shell with:
@@ -50,3 +50,8 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 ## Tracking Rule
 
 This README should be updated whenever implementation meaningfully changes so the repo has a current human-readable progress log alongside the specs and code.
+
+## Spec Coverage
+
+- `00` to `08`: foundation, protocol, backend, UI, observability, and tests
+- `09` to `18`: room UX, `libmpv`, reconnects, sync correction, chat/presence, networking, observability implementation, performance, packaging, and QA/release acceptance
