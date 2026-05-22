@@ -77,6 +77,14 @@ export interface PlaybackCommand {
   issuedAtMs: number;
 }
 
+export interface PlaybackHeartbeat {
+  commandSeq: number;
+  positionMs: number;
+  status: PlayerStatus;
+  activeSource?: string | null;
+  sentAtMs: number;
+}
+
 export interface ChatMessage {
   id: string;
   senderSessionId: string;
@@ -90,6 +98,7 @@ export type ClientEnvelope =
   | { type: 'ready_state'; payload: { ready: boolean } }
   | { type: 'chat_send'; payload: { text: string } }
   | { type: 'playback_command'; payload: PlaybackCommand }
+  | { type: 'playback_heartbeat'; payload: PlaybackHeartbeat }
   | { type: 'close_room' };
 
 export type ServerEnvelope =
@@ -104,6 +113,7 @@ export type ServerEnvelope =
   | { type: 'presence'; payload: RoomSnapshot }
   | { type: 'chat'; payload: ChatMessage }
   | { type: 'playback'; payload: PlaybackCommand }
+  | { type: 'playback_heartbeat'; payload: PlaybackHeartbeat }
   | { type: 'error'; payload: { code: string; message: string } }
   | { type: 'room_closed'; payload: { reason: RoomCloseReason } };
 

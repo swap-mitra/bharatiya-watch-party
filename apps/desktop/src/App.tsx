@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { connectRoomSocket, createRoom, joinRoom, sendEnvelope } from './lib/roomClient';
-import { onPlayerState, onPlayerTracks, tauriPlayer } from './lib/tauri';
+import { onPlayerState, onPlayerTracks, registerWebPlayerElement, tauriPlayer } from './lib/tauri';
 import type {
   ChatMessage,
   CreateRoomResponse,
   JoinRoomResponse,
   PlaybackAction,
   PlaybackCommand,
+  PlaybackHeartbeat,
   PlayerState,
   RoomCloseReason,
   RoomSession,
@@ -34,14 +35,25 @@ const initialPlayerState: PlayerState = {
 const initialTracks: TrackCatalog = { audio: [], subtitles: [] };
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1500;
+const HOST_HEARTBEAT_INTERVAL_MS = 2000;
+const PAUSED_DRIFT_SEEK_MS = 500;
+const PLAYING_DRIFT_SEEK_MS = 750;
+const PLAYING_DRIFT_HARD_SEEK_MS = 3000;
+const MIN_CORRECTION_INTERVAL_MS = 1000;
 
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const manualCloseRef = useRef(false);
   const nextSeqRef = useRef(1);
   const roomSessionRef = useRef<RoomSession | null>(null);
   const roomClosedReasonRef = useRef<RoomCloseReason | null>(null);
+  const playerStateRef = useRef<PlayerState>(initialPlayerState);
+  const sendHostHeartbeatRef = useRef<() => void>(() => undefined);
+  const lastRoomCommandSeqRef = useRef(0);
+  const lastSyncCorrectionAtRef = useRef(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   const [playerState, setPlayerState] = useState<PlayerState>(initialPlayerState);
   const [tracks, setTracks] = useState<TrackCatalog>(initialTracks);
@@ -53,7 +65,7 @@ export default function App() {
   const [eventLog, setEventLog] = useState<string[]>(['Desktop shell ready']);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [streamUrl, setStreamUrl] = useState(
-    'https://demo.unified-streaming.com/k8s/features/stable/video/tears-of-steel/tears-of-steel.ism/.mpd',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
   );
   const [seekValue, setSeekValue] = useState(120000);
   const [chatDraft, setChatDraft] = useState('');
@@ -71,8 +83,58 @@ export default function App() {
   }, [roomSession]);
 
   useEffect(() => {
+    playerStateRef.current = playerState;
+  }, [playerState]);
+
+  useEffect(() => {
+    sendHostHeartbeatRef.current = () => {
+      const session = roomSessionRef.current;
+      const state = playerStateRef.current;
+      if (!session || session.role !== 'host' || !state.activeSource) {
+        return;
+      }
+      if (!['playing', 'paused', 'buffering', 'loading'].includes(state.status)) {
+        return;
+      }
+
+      try {
+        sendEnvelope(socketRef.current, {
+          type: 'playback_heartbeat',
+          payload: {
+            commandSeq: Math.max(0, nextSeqRef.current - 1),
+            positionMs: state.positionMs,
+            status: state.status,
+            activeSource: state.activeSource,
+            sentAtMs: Date.now(),
+          },
+        });
+      } catch (error) {
+        pushEvent(`Heartbeat skipped: ${String(error)}`);
+      }
+    };
+  });
+
+  useEffect(() => {
     roomClosedReasonRef.current = roomClosedReason;
   }, [roomClosedReason]);
+
+  useEffect(() => {
+    clearHeartbeatTimer();
+    if (!roomSession || roomSession.role !== 'host' || transportState !== 'connected' || roomClosedReason) {
+      return;
+    }
+
+    heartbeatTimerRef.current = setInterval(() => {
+      sendHostHeartbeatRef.current();
+    }, HOST_HEARTBEAT_INTERVAL_MS);
+
+    return clearHeartbeatTimer;
+  }, [roomSession, transportState, roomClosedReason]);
+
+  useEffect(() => {
+    registerWebPlayerElement(playerBackend === 'web-video' ? videoRef.current : null);
+    return () => registerWebPlayerElement(null);
+  }, [playerBackend, roomSession]);
 
   useEffect(() => {
     tauriPlayer
@@ -100,6 +162,7 @@ export default function App() {
 
     return () => {
       clearReconnectTimer();
+      clearHeartbeatTimer();
       if (socketRef.current) {
         manualCloseRef.current = true;
         socketRef.current.close();
@@ -256,6 +319,13 @@ export default function App() {
     }
   }
 
+  function clearHeartbeatTimer() {
+    if (heartbeatTimerRef.current) {
+      clearInterval(heartbeatTimerRef.current);
+      heartbeatTimerRef.current = null;
+    }
+  }
+
   function closeSocketSilently() {
     clearReconnectTimer();
     if (socketRef.current) {
@@ -293,8 +363,13 @@ export default function App() {
         if (message.payload.streamUrl) {
           setStreamUrl(message.payload.streamUrl);
         }
+        lastRoomCommandSeqRef.current = Math.max(lastRoomCommandSeqRef.current, message.payload.seq);
         await applyPlaybackCommand(message.payload);
         pushEvent(`Playback command ${message.payload.action} (${message.payload.seq})`);
+        return;
+      }
+      case 'playback_heartbeat': {
+        await applyPlaybackHeartbeat(message.payload);
         return;
       }
       case 'error': {
@@ -334,6 +409,70 @@ export default function App() {
     } else if (snapshot.status === 'stopped') {
       await tauriPlayer.stop();
     }
+  }
+
+  async function applyPlaybackHeartbeat(heartbeat: PlaybackHeartbeat) {
+    if (roomSessionRef.current?.role === 'host') {
+      return;
+    }
+    if (heartbeat.commandSeq < lastRoomCommandSeqRef.current) {
+      return;
+    }
+    if (!heartbeat.activeSource) {
+      return;
+    }
+
+    const current = playerStateRef.current;
+    if (current.activeSource !== heartbeat.activeSource) {
+      setStreamUrl(heartbeat.activeSource);
+      await tauriPlayer.loadStream(heartbeat.activeSource);
+      await tauriPlayer.seek(heartbeat.positionMs);
+      if (heartbeat.status === 'playing') {
+        await tauriPlayer.play();
+      } else if (heartbeat.status === 'paused') {
+        await tauriPlayer.pause();
+      }
+      pushEvent('Synced to host source heartbeat');
+      return;
+    }
+
+    const driftMs = current.positionMs - heartbeat.positionMs;
+    const absoluteDriftMs = Math.abs(driftMs);
+
+    if (heartbeat.status === 'paused') {
+      if (absoluteDriftMs > PAUSED_DRIFT_SEEK_MS) {
+        await tauriPlayer.seek(heartbeat.positionMs);
+      }
+      if (current.status !== 'paused') {
+        await tauriPlayer.pause();
+      }
+      return;
+    }
+
+    if (heartbeat.status !== 'playing') {
+      return;
+    }
+
+    if (current.status !== 'playing') {
+      await tauriPlayer.play();
+    }
+
+    if (absoluteDriftMs < PLAYING_DRIFT_SEEK_MS) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - lastSyncCorrectionAtRef.current < MIN_CORRECTION_INTERVAL_MS) {
+      return;
+    }
+    lastSyncCorrectionAtRef.current = now;
+
+    await tauriPlayer.seek(heartbeat.positionMs);
+    pushEvent(
+      absoluteDriftMs >= PLAYING_DRIFT_HARD_SEEK_MS
+        ? `Hard synced ${absoluteDriftMs}ms drift`
+        : `Corrected ${absoluteDriftMs}ms drift`,
+    );
   }
 
   async function applyPlaybackCommand(command: PlaybackCommand) {
@@ -452,6 +591,7 @@ export default function App() {
 
   function leaveRoom() {
     closeSocketSilently();
+    clearHeartbeatTimer();
     setRoomSession(null);
     roomSessionRef.current = null;
     setRoomSnapshot(null);
@@ -478,7 +618,7 @@ export default function App() {
         <div className="topbar-meta">
           <span>Surface {surfaceState}</span>
           <span>{describeTransportState(transportState)}</span>
-          <span>{playerBackend === 'libmpv' ? 'Native libmpv' : 'Mock player'}</span>
+          <span>{formatPlayerBackend(playerBackend)}</span>
           <button
             type="button"
             className="ghost-button"
@@ -562,9 +702,10 @@ export default function App() {
                 <li>
                   {playerBackend === 'libmpv'
                     ? 'Native playback is available through libmpv'
-                    : 'Mock harness active until libmpv is installed'}
+                    : 'Browser video fallback is active until libmpv is installed or bundled'}
                 </li>
-                <li>Native playback currently opens through mpv’s own window while the desktop shell controls it</li>
+                <li>Native playback currently opens through mpv's own window while the desktop shell controls it</li>
+                <li>Fallback playback supports MP4/WebM and browser-native HLS; DASH requires native playback</li>
                 <li>Room and player contracts stay the same regardless of backend mode</li>
               </ul>
             </div>
@@ -624,6 +765,15 @@ export default function App() {
               </div>
 
               <div className="player-stage cinematic">
+                {playerBackend === 'web-video' ? (
+                  <video
+                    ref={videoRef}
+                    className={`video-surface ${playerState.activeSource ? 'active' : ''}`}
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : null}
                 <div>
                   <p className="stage-label">Source</p>
                   <p className="stage-value">{playerState.activeSource ?? 'Waiting for the host to load a direct media URL'}</p>
@@ -799,7 +949,11 @@ export default function App() {
               <p className="eyebrow">Session detail</p>
               <p>{describeTransportState(transportState)}</p>
               <p>{roomSession.role === 'host' ? 'Host authority enabled' : 'Viewer following host timeline'}</p>
-              <p>{playerBackend === 'libmpv' ? 'Playback opens through native libmpv' : 'Playback is running on the mock harness'}</p>
+              <p>
+                {playerBackend === 'libmpv'
+                  ? 'Playback opens through native libmpv'
+                  : 'Playback is running on the browser video fallback'}
+              </p>
             </section>
           </footer>
         </main>
@@ -876,6 +1030,16 @@ function describeTransportState(transportState: TransportState): string {
   }
 }
 
+function formatPlayerBackend(backend: string): string {
+  if (backend === 'libmpv') {
+    return 'Native libmpv';
+  }
+  if (backend === 'web-video') {
+    return 'Browser video';
+  }
+  return 'Mock player';
+}
+
 function deriveRoomErrorTitle(message: string): string {
   const normalized = message.toLowerCase();
   if (normalized.includes('full')) {
@@ -929,5 +1093,4 @@ function surfaceCopy(
       return 'The room surface is transitioning.';
   }
 }
-
 

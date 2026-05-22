@@ -311,6 +311,24 @@ select {
     linear-gradient(180deg, rgba(10, 13, 18, 0.92), rgba(14, 18, 24, 0.98));
 }
 
+.video-surface {
+  width: 100%;
+  min-height: 260px;
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(242, 238, 230, 0.08);
+  border-radius: 20px;
+  background: #020305;
+  object-fit: contain;
+}
+
+.video-surface.active {
+  min-height: 300px;
+}
+
+.app-shell.theater.in-room .video-surface {
+  min-height: min(62vh, 680px);
+}
+
 .stage-grid,
 .control-row,
 .control-grid,

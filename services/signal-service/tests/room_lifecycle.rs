@@ -1,6 +1,6 @@
 use app_core::{
     ClientMessage, CreateRoomRequest, JoinRoomRequest, PlaybackAction, PlaybackCommand,
-    RoomCloseReason, ServerMessage,
+    PlaybackHeartbeat, PlayerStatus, RoomCloseReason, ServerMessage,
 };
 use signal_service::{RoomRegistry, ServiceConfig};
 use tokio::{
@@ -94,6 +94,171 @@ async fn viewer_playback_commands_are_rejected() {
     .await
     .expect("viewer should receive error");
     assert!(matches!(received, ServerMessage::Error { .. }));
+}
+
+#[tokio::test]
+async fn viewer_playback_heartbeats_are_rejected() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let joined = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, _viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), joined.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    let result = registry.handle_client_message(
+        &created.room_code,
+        &joined.session_id,
+        ClientMessage::PlaybackHeartbeat(PlaybackHeartbeat {
+            command_seq: 1,
+            position_ms: 42_000,
+            status: PlayerStatus::Playing,
+            active_source: Some("https://example.com/movie.mp4".into()),
+            sent_at_ms: 10,
+        }),
+    );
+
+    assert!(matches!(result, Err(app_core::AppError::Unauthorized)));
+}
+
+#[tokio::test]
+async fn host_heartbeat_broadcasts_and_updates_late_join_snapshot() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let joined = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), joined.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &created.session_id,
+            ClientMessage::PlaybackCommand(PlaybackCommand {
+                seq: 1,
+                action: PlaybackAction::LoadStream,
+                position_ms: Some(0),
+                stream_url: Some("https://example.com/movie.mp4".into()),
+                issued_at_ms: 10,
+            }),
+        )
+        .expect("host command should be accepted");
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &created.session_id,
+            ClientMessage::PlaybackHeartbeat(PlaybackHeartbeat {
+                command_seq: 1,
+                position_ms: 42_000,
+                status: PlayerStatus::Playing,
+                active_source: Some("https://example.com/movie.mp4".into()),
+                sent_at_ms: 20,
+            }),
+        )
+        .expect("host heartbeat should be accepted");
+
+    let heartbeat = recv_until(&mut viewer_rx, |message| {
+        matches!(message, ServerMessage::PlaybackHeartbeat(_))
+    })
+    .await
+    .expect("viewer should receive heartbeat");
+    assert!(matches!(
+        heartbeat,
+        ServerMessage::PlaybackHeartbeat(PlaybackHeartbeat {
+            command_seq: 1,
+            position_ms: 42_000,
+            status: PlayerStatus::Playing,
+            ..
+        })
+    ));
+
+    let late_viewer = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Late Viewer".into(),
+            },
+        )
+        .expect("late viewer should join");
+    let (late_tx, _late_rx) = mpsc::unbounded_channel();
+    let welcome = registry
+        .connect(created.room_code.clone(), late_viewer.session_id, late_tx)
+        .expect("late viewer should connect");
+
+    match welcome {
+        ServerMessage::Welcome { playback, .. } => {
+            assert_eq!(playback.position_ms, 42_000);
+            assert_eq!(playback.status, PlayerStatus::Playing);
+            assert_eq!(
+                playback.active_source,
+                Some("https://example.com/movie.mp4".into())
+            );
+        }
+        _ => panic!("expected welcome message"),
+    }
+}
+
+#[tokio::test]
+async fn host_heartbeat_cannot_replace_load_stream_command() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+
+    let result = registry.handle_client_message(
+        &created.room_code,
+        &created.session_id,
+        ClientMessage::PlaybackHeartbeat(PlaybackHeartbeat {
+            command_seq: 1,
+            position_ms: 42_000,
+            status: PlayerStatus::Playing,
+            active_source: Some("https://example.com/movie.mp4".into()),
+            sent_at_ms: 20,
+        }),
+    );
+
+    assert!(matches!(result, Err(app_core::AppError::Validation(_))));
 }
 
 #[tokio::test]

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    player::PlayerState,
+    player::{PlayerState, PlayerStatus},
     room::{Participant, ParticipantRole, RoomCode, SessionId},
 };
 
@@ -68,6 +68,16 @@ pub struct PlaybackCommand {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct PlaybackHeartbeat {
+    pub command_seq: u64,
+    pub position_ms: u64,
+    pub status: PlayerStatus,
+    pub active_source: Option<String>,
+    pub sent_at_ms: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ChatMessage {
     pub id: String,
     pub sender_session_id: SessionId,
@@ -91,6 +101,7 @@ pub enum ClientMessage {
     ReadyState { ready: bool },
     ChatSend { text: String },
     PlaybackCommand(PlaybackCommand),
+    PlaybackHeartbeat(PlaybackHeartbeat),
     CloseRoom,
 }
 
@@ -112,6 +123,7 @@ pub enum ServerMessage {
     RoomClosed {
         reason: RoomCloseReason,
     },
+    PlaybackHeartbeat(PlaybackHeartbeat),
 }
 
 #[cfg(test)]
@@ -161,6 +173,21 @@ mod tests {
 
         let encoded = serde_json::to_string(&message).expect("serializes");
         let decoded: ServerMessage = serde_json::from_str(&encoded).expect("deserializes");
+        assert_eq!(message, decoded);
+    }
+
+    #[test]
+    fn heartbeat_message_round_trip() {
+        let message = ClientMessage::PlaybackHeartbeat(PlaybackHeartbeat {
+            command_seq: 9,
+            position_ms: 15_500,
+            status: PlayerStatus::Playing,
+            active_source: Some("https://example.com/movie.mp4".into()),
+            sent_at_ms: 999,
+        });
+
+        let encoded = serde_json::to_string(&message).expect("serializes");
+        let decoded: ClientMessage = serde_json::from_str(&encoded).expect("deserializes");
         assert_eq!(message, decoded);
     }
 }

@@ -7,7 +7,8 @@ use std::{
 use app_core::{
     AppError, AppResult, ChatMessage, ClientMessage, CreateRoomRequest, CreateRoomResponse,
     JoinRoomRequest, JoinRoomResponse, MAX_VIEWERS, Participant, ParticipantRole, PlaybackCommand,
-    PlayerState, RoomCloseReason, RoomCode, RoomSnapshot, ServerMessage, SessionId, validation,
+    PlaybackHeartbeat, PlayerState, RoomCloseReason, RoomCode, RoomSnapshot, ServerMessage,
+    SessionId, validation,
 };
 use axum::{
     Json, Router,
@@ -64,6 +65,7 @@ pub fn app_router(state: AppState) -> Router {
         .allow_origin([
             HeaderValue::from_static("http://localhost:1420"),
             HeaderValue::from_static("http://127.0.0.1:1420"),
+            HeaderValue::from_static("http://tauri.localhost"),
             HeaderValue::from_static("tauri://localhost"),
             HeaderValue::from_static("https://tauri.localhost"),
         ])
@@ -447,6 +449,43 @@ impl RoomRegistry {
                 self.broadcast(room_code, ServerMessage::Playback(command));
                 Ok(())
             }
+            ClientMessage::PlaybackHeartbeat(heartbeat) => {
+                let is_authorized = {
+                    let rooms = self.rooms.read();
+                    let room = rooms.get(room_code).ok_or(AppError::RoomNotFound)?;
+                    room.host_session_id == *session_id
+                };
+                if !is_authorized {
+                    return Err(AppError::Unauthorized);
+                }
+
+                if let Some(url) = &heartbeat.active_source {
+                    app_core::validation::validate_stream_url(url)?;
+                }
+
+                let heartbeat = {
+                    let mut rooms = self.rooms.write();
+                    let room = rooms.get_mut(room_code).ok_or(AppError::RoomNotFound)?;
+                    if heartbeat.command_seq < room.last_sequence {
+                        return Ok(());
+                    }
+                    if heartbeat.command_seq > room.last_sequence {
+                        return Err(AppError::Validation(
+                            "heartbeat cannot advance playback sequence".into(),
+                        ));
+                    }
+                    if room.playback.active_source != heartbeat.active_source {
+                        return Err(AppError::Validation(
+                            "heartbeat source must match active room source".into(),
+                        ));
+                    }
+                    room.touch(self.config.room_ttl);
+                    room.playback = apply_playback_heartbeat(room.playback.clone(), &heartbeat);
+                    heartbeat
+                };
+                self.broadcast(room_code, ServerMessage::PlaybackHeartbeat(heartbeat));
+                Ok(())
+            }
         }
     }
 
@@ -650,6 +689,14 @@ fn apply_playback_command(mut state: PlayerState, command: &PlaybackCommand) -> 
             state.status = app_core::PlayerStatus::Stopped;
         }
     }
+    state
+}
+
+fn apply_playback_heartbeat(mut state: PlayerState, heartbeat: &PlaybackHeartbeat) -> PlayerState {
+    state.position_ms = heartbeat.position_ms;
+    state.status = heartbeat.status.clone();
+    state.active_source = heartbeat.active_source.clone();
+    state.last_error = None;
     state
 }
 

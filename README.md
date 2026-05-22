@@ -29,9 +29,10 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - dynamic `libmpv` loading in the Tauri backend
   - direct media loading, play, pause, seek, stop, and state polling
   - audio track and subtitle track discovery and selection
-  - frontend bootstrap reporting for native vs mock backend mode
-  - development fallback harness when `libmpv` is not installed yet
+  - frontend bootstrap reporting for native vs browser fallback backend mode
+  - browser video fallback when `libmpv` is not installed yet or the frontend runs in plain web mode
 - Reconnect-aware desktop room experience with dedicated lobby, reconnecting, and closed-room surfaces
+- Host-authoritative playback heartbeats with conservative viewer drift correction and late-join timeline snapshots
 - CI for Rust and frontend checks
 
 ### Verified
@@ -48,7 +49,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Sprint 2: complete
 - Sprint 3: implemented end to end in code
   - Native playback uses `libmpv` when the shared library is available.
-  - If `libmpv` is missing, the desktop app falls back to the mock player harness and surfaces a warning in the UI.
+  - If `libmpv` is missing, the desktop app falls back to a real browser `<video>` playback surface and surfaces a warning in the UI.
 
 ## Native Playback Notes
 
@@ -64,17 +65,19 @@ The Tauri desktop backend will try to load `libmpv` from:
 
 For full native playback on a collaborator machine, `libmpv` must be installed or bundled so the desktop app can load it at runtime.
 
-If `libmpv` is missing on Windows, the desktop app will show a warning like `LoadLibraryExW failed` and fall back to the mock harness. That does not block room creation or signaling.
+If `libmpv` is missing on Windows, the desktop app will show a warning like `LoadLibraryExW failed` and fall back to browser video playback. That does not block room creation or signaling.
+
+The browser fallback is intended for local development and smoke testing. It supports MP4/WebM and browser-native HLS where the embedded WebView supports it. DASH `.mpd` streams still require native `libmpv` playback or a future MSE/DASH integration.
 
 ## Local Development Notes
 
 - Start the signaling service with `cargo run -p signal-service` before creating or joining rooms.
-- The signal service now allows local desktop/webview origins for development on `localhost:1420` and `127.0.0.1:1420`.
+- The signal service allows local desktop/webview origins for development on `localhost:1420`, `127.0.0.1:1420`, and Tauri local origins.
 - If room actions fail with `Could not reach the signal service`, verify that port `4000` is free and the backend is listening on `http://127.0.0.1:4000`.
 
 ## Current Gaps
 
-- Playback synchronization is still command replication only; drift correction and late-join sync refinement are still pending
+- Playback synchronization now has host heartbeats and seek-based drift correction, but playback-rate smoothing and measured threshold tuning are still pending
 - TURN/STUN, hosted fallback transport strategy, and deeper observability are not implemented yet
 - Packaging and bundling of `libmpv` for distribution still needs to be finished for release builds
 

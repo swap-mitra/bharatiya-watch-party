@@ -11,7 +11,7 @@ pub use player::{
 };
 pub use protocol::{
     ChatMessage, ClientMessage, CreateRoomRequest, CreateRoomResponse, JoinRoomRequest,
-    JoinRoomResponse, PlaybackAction, PlaybackCommand, RoomCloseReason, RoomSnapshot,
-    ServerMessage,
+    JoinRoomResponse, PlaybackAction, PlaybackCommand, PlaybackHeartbeat, RoomCloseReason,
+    RoomSnapshot, ServerMessage,
 };
 pub use room::{MAX_VIEWERS, Participant, ParticipantRole, RoomCode, SessionId};

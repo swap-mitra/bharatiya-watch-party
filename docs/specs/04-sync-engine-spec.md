@@ -27,9 +27,10 @@ Keep all viewers aligned to the host timeline with a host-authoritative model an
 
 ## Correction Policy
 
-- Sprint 3 foundation: command replication only, no drift correction loop yet
-- Sprint 5 target: drift thresholds for no-op, small correction, and hard seek
-- Sync math must use a monotonic clock in Rust when the drift engine is implemented
+- Sprint 3 foundation: command replication
+- Sprint 5 foundation: host playback heartbeats with conservative viewer-side seek correction
+- Implemented thresholds are documented in `12-sync-correction-spec.md`
+- Future sync math should move toward monotonic-clock measurement and playback-rate trimming after cross-machine testing
 
 ## Readiness Model
 
