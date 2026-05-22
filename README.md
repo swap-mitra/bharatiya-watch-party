@@ -20,9 +20,14 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Desktop watch-party shell with:
   - create room flow
   - join room flow
+  - client-side create/join validation
+  - copyable room code in active rooms
   - room summary and participant list
+  - lobby readiness meter
   - standard and theater layout modes
   - room chat panel
+  - compact chat character limits
+  - host/viewer playback authority messaging
   - Tauri player command/event bridge
 - Sprint 3 native playback foundation with:
   - `PlayerAdapter` contract in the shared Rust domain crate
@@ -53,6 +58,8 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - Native playback uses `libmpv` when the shared library is available.
   - If `libmpv` is missing, the desktop app falls back to a real browser `<video>` playback surface and surfaces a warning in the UI.
   - The landing screen includes a local playback harness for direct URL testing before room sync.
+- Sprint 4: implemented in code
+  - Watch-room UI, create/join validation, room code sharing, readiness, compact chat, and host/viewer control states are built.
 
 ## Native Playback Notes
 

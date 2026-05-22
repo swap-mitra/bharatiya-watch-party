@@ -41,6 +41,7 @@ export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const manualCloseRef = useRef(false);
   const nextSeqRef = useRef(1);
   const roomSessionRef = useRef<RoomSession | null>(null);
@@ -73,6 +74,7 @@ export default function App() {
   const [playerWarning, setPlayerWarning] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [selfReady, setSelfReady] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle');
 
   useEffect(() => {
     roomSessionRef.current = roomSession;
@@ -154,6 +156,7 @@ export default function App() {
     return () => {
       clearReconnectTimer();
       clearHeartbeatTimer();
+      clearCopiedTimer();
       if (socketRef.current) {
         manualCloseRef.current = true;
         socketRef.current.close();
@@ -170,6 +173,11 @@ export default function App() {
   const roomInteractive = transportState === 'connected' && roomClosedReason === null;
   const canOperatePlayer = !roomSession || (isHost && roomInteractive);
   const canSendChat = roomInteractive;
+  const createNameError = getDisplayNameError(createName);
+  const joinNameError = getDisplayNameError(joinName);
+  const joinCodeError = getRoomCodeError(joinCode);
+  const chatLength = chatDraft.trim().length;
+  const chatTooLong = chatLength > 500;
   const subtitleValue = playerState.selectedSubtitleTrack ?? 'none';
   const statusLabel = useMemo(
     () => playerState.status.replace(/(^\w)/, (letter) => letter.toUpperCase()),
@@ -177,10 +185,11 @@ export default function App() {
   );
   const surfaceState = deriveSurfaceState(roomSession, transportState, roomClosedReason, playerState.status);
   const roomErrorTitle = roomError ? deriveRoomErrorTitle(roomError) : null;
+  const readyPercent = participantCount > 0 ? Math.round((readyCount / participantCount) * 100) : 0;
 
   async function handleCreateRoom() {
-    if (!createName.trim()) {
-      setRoomError('Enter a display name for the host.');
+    if (createNameError) {
+      setRoomError(createNameError);
       return;
     }
 
@@ -198,8 +207,8 @@ export default function App() {
   }
 
   async function handleJoinRoom() {
-    if (!joinName.trim() || !joinCode.trim()) {
-      setRoomError('Enter a room code and display name to join.');
+    if (joinCodeError || joinNameError) {
+      setRoomError(joinCodeError ?? joinNameError ?? 'Enter a valid room code and display name.');
       return;
     }
 
@@ -314,6 +323,13 @@ export default function App() {
     if (heartbeatTimerRef.current) {
       clearInterval(heartbeatTimerRef.current);
       heartbeatTimerRef.current = null;
+    }
+  }
+
+  function clearCopiedTimer() {
+    if (copiedTimerRef.current) {
+      clearTimeout(copiedTimerRef.current);
+      copiedTimerRef.current = null;
     }
   }
 
@@ -529,6 +545,10 @@ export default function App() {
     if (!chatDraft.trim()) {
       return;
     }
+    if (chatTooLong) {
+      setRoomError('Chat messages must be 500 characters or less.');
+      return;
+    }
 
     try {
       sendEnvelope(socketRef.current, {
@@ -548,6 +568,24 @@ export default function App() {
     } catch (error) {
       setRoomError(String(error));
     }
+  }
+
+  async function copyRoomCode() {
+    if (!roomSession) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(roomSession.roomCode);
+      setCopyState('copied');
+      pushEvent(`Copied room code ${roomSession.roomCode}`);
+    } catch {
+      setCopyState('failed');
+      pushEvent('Could not copy room code');
+    }
+
+    clearCopiedTimer();
+    copiedTimerRef.current = setTimeout(() => setCopyState('idle'), 1800);
   }
 
   function leaveRoom() {
@@ -614,8 +652,9 @@ export default function App() {
                 <label className="field">
                   <span>Display name</span>
                   <input value={createName} onChange={(event) => setCreateName(event.target.value)} />
+                  <small>{createNameError ?? '2-24 letters, numbers, spaces, underscores, or hyphens.'}</small>
                 </label>
-                <button type="button" onClick={handleCreateRoom} disabled={isSubmitting}>
+                <button type="button" onClick={handleCreateRoom} disabled={isSubmitting || Boolean(createNameError)}>
                   {isSubmitting ? 'Starting...' : 'Create room'}
                 </button>
               </section>
@@ -627,13 +666,24 @@ export default function App() {
                 </div>
                 <label className="field">
                   <span>Room code</span>
-                  <input value={joinCode} onChange={(event) => setJoinCode(event.target.value.toUpperCase())} />
+                  <input
+                    value={joinCode}
+                    maxLength={6}
+                    onChange={(event) => setJoinCode(formatRoomCodeInput(event.target.value))}
+                  />
+                  <small>{joinCodeError ?? 'Six-character room code from the host.'}</small>
                 </label>
                 <label className="field">
                   <span>Display name</span>
                   <input value={joinName} onChange={(event) => setJoinName(event.target.value)} />
+                  <small>{joinNameError ?? 'Use a name others can recognize.'}</small>
                 </label>
-                <button type="button" className="secondary" onClick={handleJoinRoom} disabled={isSubmitting}>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={handleJoinRoom}
+                  disabled={isSubmitting || Boolean(joinCodeError || joinNameError)}
+                >
                   {isSubmitting ? 'Joining...' : 'Join room'}
                 </button>
               </section>
@@ -791,13 +841,21 @@ export default function App() {
           <section className="room-summary">
             <div>
               <p className="eyebrow">Room</p>
-              <h2>{roomSession.roomCode}</h2>
+              <div className="room-code-row">
+                <h2>{roomSession.roomCode}</h2>
+                <button type="button" className="copy-code-button" onClick={() => void copyRoomCode()}>
+                  {copyState === 'copied' ? 'Copied' : copyState === 'failed' ? 'Copy failed' : 'Copy code'}
+                </button>
+              </div>
             </div>
             <div className="summary-stats">
-              <span>{roomSession.role === 'host' ? 'Host' : 'Viewer'}</span>
+              <span className="role-chip">{roomSession.role === 'host' ? 'Host controls' : 'Viewer mode'}</span>
               <span>{participantCount} connected</span>
               <span>{viewerCount}/{roomSession.maxViewers} viewers</span>
               <span>{readyCount} ready</span>
+            </div>
+            <div className="readiness-meter" aria-label={`${readyCount} of ${participantCount} participants ready`}>
+              <span style={{ width: `${readyPercent}%` }} />
             </div>
             <div className="summary-actions">
               <button type="button" className="ghost-button" onClick={toggleReady} disabled={!roomInteractive}>
@@ -836,7 +894,10 @@ export default function App() {
                   <p className="eyebrow">Playback</p>
                   <h2>{playerState.activeSource ? 'Watch surface' : 'Lobby stage'}</h2>
                 </div>
-                <span className={`status-pill ${playerState.status}`}>{statusLabel}</span>
+                <div className="panel-actions">
+                  <span className="authority-pill">{isHost ? 'Host controls enabled' : 'Following host'}</span>
+                  <span className={`status-pill ${playerState.status}`}>{statusLabel}</span>
+                </div>
               </div>
 
               <div className="player-stage cinematic">
@@ -867,10 +928,21 @@ export default function App() {
                 </div>
                 <p className="stage-note">
                   {isHost
-                    ? 'Host commands replicate through the room socket. Viewers mirror playback and can stay in the lobby until you start.'
-                    : 'Viewer mode follows host-issued playback commands. Local playback controls stay read-only inside the room.'}
+                    ? 'Load a direct URL, check readiness, then start playback for everyone in the room.'
+                    : 'Playback is controlled by the host. Keep this window open and use chat while you wait.'}
                 </p>
               </div>
+
+              <section className={`control-notice ${canOperatePlayer ? 'active' : 'locked'}`}>
+                <strong>{canOperatePlayer ? 'Playback controls are available.' : 'Playback controls are locked.'}</strong>
+                <span>
+                  {canOperatePlayer
+                    ? roomSession.role === 'host'
+                      ? 'Host actions will be sent to every viewer.'
+                      : 'Local mode can control playback before joining a room.'
+                    : 'Viewers receive host playback commands automatically.'}
+                </span>
+              </section>
 
               <label className="field">
                 <span>Direct media URL</span>
@@ -955,20 +1027,34 @@ export default function App() {
                   <p className="eyebrow">Room activity</p>
                   <h2>People and chat</h2>
                 </div>
+                <span className="chat-count">{chatMessages.length}</span>
               </div>
 
               <section className="presence-list">
-                {(roomSnapshot?.participants ?? []).map((participant) => (
-                  <div key={participant.sessionId} className="presence-row">
-                    <div>
-                      <strong>{participant.displayName}</strong>
-                      <p>{participant.role === 'host' ? 'Host' : participant.connected ? 'Viewer' : 'Viewer offline'}</p>
+                {(roomSnapshot?.participants ?? []).length === 0 ? (
+                  <article className="empty-state">
+                    <strong>No participants yet</strong>
+                    <p>Share the room code and viewers will appear here.</p>
+                  </article>
+                ) : (
+                  (roomSnapshot?.participants ?? []).map((participant) => (
+                    <div
+                      key={participant.sessionId}
+                      className={`presence-row ${participant.connected ? '' : 'offline'}`}
+                    >
+                      <div>
+                        <strong>
+                          {participant.displayName}
+                          {participant.sessionId === roomSession.sessionId ? ' (you)' : ''}
+                        </strong>
+                        <p>{participant.role === 'host' ? 'Host' : participant.connected ? 'Viewer' : 'Viewer offline'}</p>
+                      </div>
+                      <span className={`presence-chip ${participant.ready ? 'ready' : 'waiting'}`}>
+                        {participant.ready ? 'Ready' : participant.connected ? 'Waiting' : 'Offline'}
+                      </span>
                     </div>
-                    <span className={`presence-chip ${participant.ready ? 'ready' : 'waiting'}`}>
-                      {participant.ready ? 'Ready' : participant.connected ? 'Waiting' : 'Offline'}
-                    </span>
-                  </div>
-                ))}
+                  ))
+                )}
               </section>
 
               <section className="chat-messages live-chat">
@@ -996,6 +1082,7 @@ export default function App() {
                   value={chatDraft}
                   onChange={(event) => setChatDraft(event.target.value)}
                   placeholder="Send a message to the room"
+                  maxLength={520}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();
@@ -1004,9 +1091,12 @@ export default function App() {
                   }}
                   disabled={!canSendChat}
                 />
-                <button type="button" className="secondary" onClick={sendChatMessage} disabled={!canSendChat}>
-                  Send
-                </button>
+                <div className="chat-send-stack">
+                  <span className={chatTooLong ? 'over-limit' : ''}>{chatLength}/500</span>
+                  <button type="button" className="secondary" onClick={sendChatMessage} disabled={!canSendChat || chatTooLong}>
+                    Send
+                  </button>
+                </div>
               </footer>
             </aside>
           </section>
@@ -1127,6 +1217,31 @@ function deriveRoomErrorTitle(message: string): string {
     return 'Invalid stream';
   }
   return 'Room issue';
+}
+
+function getDisplayNameError(value: string): string | null {
+  const trimmed = value.trim();
+  if (trimmed.length < 2 || trimmed.length > 24) {
+    return 'Display name must be between 2 and 24 characters.';
+  }
+  if (!/^[A-Za-z0-9 _-]+$/.test(trimmed)) {
+    return 'Display name can only use letters, numbers, spaces, underscores, or hyphens.';
+  }
+  return null;
+}
+
+function getRoomCodeError(value: string): string | null {
+  if (!value.trim()) {
+    return 'Enter the room code from the host.';
+  }
+  if (!/^[A-Z0-9]{6}$/.test(value.trim().toUpperCase())) {
+    return 'Room code must be 6 uppercase letters or numbers.';
+  }
+  return null;
+}
+
+function formatRoomCodeInput(value: string): string {
+  return value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 6);
 }
 
 function surfaceHeadline(

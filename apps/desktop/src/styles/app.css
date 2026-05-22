@@ -149,7 +149,9 @@ select {
 
 .topbar-meta,
 .summary-stats,
-.summary-actions {
+.summary-actions,
+.room-code-row,
+.panel-actions {
   display: flex;
   align-items: center;
   gap: 0.8rem;
@@ -233,6 +235,24 @@ select {
   align-items: center;
 }
 
+.summary-actions {
+  grid-column: 3;
+  grid-row: 1;
+  justify-content: end;
+}
+
+.room-code-row {
+  align-items: baseline;
+}
+
+.copy-code-button {
+  padding: 0.48rem 0.72rem;
+  font-size: 0.82rem;
+  background: rgba(242, 238, 230, 0.06);
+  color: #f2eee6;
+  border-color: var(--line);
+}
+
 .stage-panel {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
@@ -271,11 +291,21 @@ select {
 
 .status-pill,
 .presence-chip,
-.status-banner {
+.status-banner,
+.authority-pill,
+.role-chip,
+.chat-count {
   border-radius: 999px;
   padding: 0.52rem 0.8rem;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.04);
+}
+
+.authority-pill,
+.role-chip,
+.chat-count {
+  color: var(--muted);
+  font-size: 0.82rem;
 }
 
 .status-pill.playing,
@@ -297,6 +327,49 @@ select {
 
 .status-banner.error {
   color: var(--danger);
+}
+
+.control-notice {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 0.85rem 1rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.control-notice strong {
+  font-size: 0.92rem;
+}
+
+.control-notice span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.control-notice.active {
+  border-color: rgba(126, 203, 149, 0.28);
+}
+
+.control-notice.locked {
+  border-color: rgba(136, 169, 255, 0.22);
+}
+
+.readiness-meter {
+  grid-column: 1 / -1;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(242, 238, 230, 0.08);
+}
+
+.readiness-meter span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  transition: width 180ms ease;
 }
 
 .player-stage {
@@ -331,6 +404,10 @@ select {
 
 .app-shell.theater.in-room .video-surface {
   min-height: min(62vh, 680px);
+}
+
+.app-shell.theater.in-room .room-rail {
+  grid-template-rows: auto auto minmax(180px, 1fr) auto;
 }
 
 .stage-grid,
@@ -387,6 +464,12 @@ select {
   color: var(--muted);
 }
 
+.field small {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
 .control-row {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
@@ -411,9 +494,19 @@ select {
   border-bottom: 1px solid rgba(242, 238, 230, 0.07);
 }
 
+.presence-row.offline {
+  opacity: 0.58;
+}
+
 .chat-messages article {
   display: grid;
   justify-content: start;
+}
+
+.empty-state {
+  display: grid;
+  gap: 0.3rem;
+  color: var(--muted);
 }
 
 .presence-row strong,
@@ -436,6 +529,21 @@ select {
 
 .active-chat {
   grid-template-columns: 1fr auto;
+}
+
+.chat-send-stack {
+  display: grid;
+  justify-items: end;
+  gap: 0.35rem;
+}
+
+.chat-send-stack span {
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+
+.chat-send-stack .over-limit {
+  color: var(--danger);
 }
 
 .bottom-strip {
@@ -469,6 +577,16 @@ select {
     justify-content: flex-start;
   }
 
+  .summary-actions {
+    grid-column: auto;
+    grid-row: auto;
+    justify-content: start;
+  }
+
+  .control-notice {
+    display: grid;
+  }
+
   .landing-main h2,
   .topbar h1 {
     max-width: 14ch;
@@ -482,6 +600,10 @@ select {
 
   .active-chat {
     grid-template-columns: 1fr;
+  }
+
+  .chat-send-stack {
+    justify-items: stretch;
   }
 }
 
