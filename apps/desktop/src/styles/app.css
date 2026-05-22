@@ -254,6 +254,10 @@ select {
   gap: 1rem;
 }
 
+.local-player-panel {
+  margin-top: 0.25rem;
+}
+
 .panel-head {
   display: flex;
   justify-content: space-between;

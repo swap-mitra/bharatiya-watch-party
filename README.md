@@ -31,8 +31,10 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - audio track and subtitle track discovery and selection
   - frontend bootstrap reporting for native vs browser fallback backend mode
   - browser video fallback when `libmpv` is not installed yet or the frontend runs in plain web mode
+  - local playback harness on the landing screen for player testing without joining a room
 - Reconnect-aware desktop room experience with dedicated lobby, reconnecting, and closed-room surfaces
 - Host-authoritative playback heartbeats with conservative viewer drift correction and late-join timeline snapshots
+- Frontend sync policy extracted into `apps/desktop/src/lib/playbackSync.ts` so heartbeat and drift behavior can evolve independently of the UI shell
 - CI for Rust and frontend checks
 
 ### Verified
@@ -50,6 +52,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Sprint 3: implemented end to end in code
   - Native playback uses `libmpv` when the shared library is available.
   - If `libmpv` is missing, the desktop app falls back to a real browser `<video>` playback surface and surfaces a warning in the UI.
+  - The landing screen includes a local playback harness for direct URL testing before room sync.
 
 ## Native Playback Notes
 
@@ -80,6 +83,10 @@ The browser fallback is intended for local development and smoke testing. It sup
 - Playback synchronization now has host heartbeats and seek-based drift correction, but playback-rate smoothing and measured threshold tuning are still pending
 - TURN/STUN, hosted fallback transport strategy, and deeper observability are not implemented yet
 - Packaging and bundling of `libmpv` for distribution still needs to be finished for release builds
+
+## Detailed Tracking
+
+Spec-by-spec implementation status is tracked in `docs/implementation-status.md`.
 
 ## Tracking Rule
 

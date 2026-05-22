@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { buildHostHeartbeat, HOST_HEARTBEAT_INTERVAL_MS, resolveHeartbeatPlan } from './lib/playbackSync';
 import { connectRoomSocket, createRoom, joinRoom, sendEnvelope } from './lib/roomClient';
 import { onPlayerState, onPlayerTracks, registerWebPlayerElement, tauriPlayer } from './lib/tauri';
 import type {
@@ -35,11 +36,6 @@ const initialPlayerState: PlayerState = {
 const initialTracks: TrackCatalog = { audio: [], subtitles: [] };
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1500;
-const HOST_HEARTBEAT_INTERVAL_MS = 2000;
-const PAUSED_DRIFT_SEEK_MS = 500;
-const PLAYING_DRIFT_SEEK_MS = 750;
-const PLAYING_DRIFT_HARD_SEEK_MS = 3000;
-const MIN_CORRECTION_INTERVAL_MS = 1000;
 
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
@@ -88,25 +84,20 @@ export default function App() {
 
   useEffect(() => {
     sendHostHeartbeatRef.current = () => {
-      const session = roomSessionRef.current;
-      const state = playerStateRef.current;
-      if (!session || session.role !== 'host' || !state.activeSource) {
-        return;
-      }
-      if (!['playing', 'paused', 'buffering', 'loading'].includes(state.status)) {
+      const heartbeat = buildHostHeartbeat({
+        session: roomSessionRef.current,
+        state: playerStateRef.current,
+        commandSeq: Math.max(0, nextSeqRef.current - 1),
+        nowMs: Date.now(),
+      });
+      if (!heartbeat) {
         return;
       }
 
       try {
         sendEnvelope(socketRef.current, {
           type: 'playback_heartbeat',
-          payload: {
-            commandSeq: Math.max(0, nextSeqRef.current - 1),
-            positionMs: state.positionMs,
-            status: state.status,
-            activeSource: state.activeSource,
-            sentAtMs: Date.now(),
-          },
+          payload: heartbeat,
         });
       } catch (error) {
         pushEvent(`Heartbeat skipped: ${String(error)}`);
@@ -412,67 +403,37 @@ export default function App() {
   }
 
   async function applyPlaybackHeartbeat(heartbeat: PlaybackHeartbeat) {
-    if (roomSessionRef.current?.role === 'host') {
-      return;
-    }
-    if (heartbeat.commandSeq < lastRoomCommandSeqRef.current) {
-      return;
-    }
-    if (!heartbeat.activeSource) {
+    const plan = resolveHeartbeatPlan({
+      current: playerStateRef.current,
+      heartbeat,
+      isHost: roomSessionRef.current?.role === 'host',
+      lastCommandSeq: lastRoomCommandSeqRef.current,
+      lastCorrectionAtMs: lastSyncCorrectionAtRef.current,
+      nowMs: Date.now(),
+    });
+
+    if (plan.kind === 'ignore') {
       return;
     }
 
-    const current = playerStateRef.current;
-    if (current.activeSource !== heartbeat.activeSource) {
-      setStreamUrl(heartbeat.activeSource);
-      await tauriPlayer.loadStream(heartbeat.activeSource);
-      await tauriPlayer.seek(heartbeat.positionMs);
-      if (heartbeat.status === 'playing') {
-        await tauriPlayer.play();
-      } else if (heartbeat.status === 'paused') {
-        await tauriPlayer.pause();
-      }
-      pushEvent('Synced to host source heartbeat');
-      return;
+    if (plan.loadSource) {
+      setStreamUrl(plan.loadSource);
+      await tauriPlayer.loadStream(plan.loadSource);
     }
-
-    const driftMs = current.positionMs - heartbeat.positionMs;
-    const absoluteDriftMs = Math.abs(driftMs);
-
-    if (heartbeat.status === 'paused') {
-      if (absoluteDriftMs > PAUSED_DRIFT_SEEK_MS) {
-        await tauriPlayer.seek(heartbeat.positionMs);
-      }
-      if (current.status !== 'paused') {
-        await tauriPlayer.pause();
-      }
-      return;
+    if (typeof plan.seekToMs === 'number') {
+      await tauriPlayer.seek(plan.seekToMs);
     }
-
-    if (heartbeat.status !== 'playing') {
-      return;
-    }
-
-    if (current.status !== 'playing') {
+    if (plan.playbackIntent === 'play') {
       await tauriPlayer.play();
+    } else if (plan.playbackIntent === 'pause') {
+      await tauriPlayer.pause();
     }
-
-    if (absoluteDriftMs < PLAYING_DRIFT_SEEK_MS) {
-      return;
+    if (typeof plan.correctionAtMs === 'number') {
+      lastSyncCorrectionAtRef.current = plan.correctionAtMs;
     }
-
-    const now = Date.now();
-    if (now - lastSyncCorrectionAtRef.current < MIN_CORRECTION_INTERVAL_MS) {
-      return;
+    if (plan.logMessage) {
+      pushEvent(plan.logMessage);
     }
-    lastSyncCorrectionAtRef.current = now;
-
-    await tauriPlayer.seek(heartbeat.positionMs);
-    pushEvent(
-      absoluteDriftMs >= PLAYING_DRIFT_HARD_SEEK_MS
-        ? `Hard synced ${absoluteDriftMs}ms drift`
-        : `Corrected ${absoluteDriftMs}ms drift`,
-    );
   }
 
   async function applyPlaybackCommand(command: PlaybackCommand) {
@@ -685,6 +646,120 @@ export default function App() {
                 <h3>{roomError}</h3>
               </section>
             ) : null}
+
+            <section className="player-panel local-player-panel">
+              <div className="panel-head">
+                <div>
+                  <p className="eyebrow">Sprint 3 harness</p>
+                  <h2>Test local playback</h2>
+                </div>
+                <span className={`status-pill ${playerState.status}`}>{statusLabel}</span>
+              </div>
+
+              <div className="player-stage cinematic">
+                {playerBackend === 'web-video' ? (
+                  <video
+                    ref={videoRef}
+                    className={`video-surface ${playerState.activeSource ? 'active' : ''}`}
+                    controls
+                    playsInline
+                    preload="metadata"
+                  />
+                ) : null}
+                <div>
+                  <p className="stage-label">Source</p>
+                  <p className="stage-value">{playerState.activeSource ?? 'Load a direct media URL to test the player bridge'}</p>
+                </div>
+                <div className="stage-grid">
+                  <div>
+                    <p className="stage-label">Position</p>
+                    <p className="stage-value">{playerState.positionMs} ms</p>
+                  </div>
+                  <div>
+                    <p className="stage-label">Tracks</p>
+                    <p className="stage-value">
+                      {tracks.audio.length} audio / {tracks.subtitles.length} subtitle
+                    </p>
+                  </div>
+                </div>
+                <p className="stage-note">
+                  Use this harness to verify load, play, pause, seek, state events, and track discovery before creating
+                  a room.
+                </p>
+              </div>
+
+              <label className="field">
+                <span>Direct media URL</span>
+                <input
+                  value={streamUrl}
+                  onChange={(event) => setStreamUrl(event.target.value)}
+                  placeholder="https://example.com/video.mp4"
+                />
+              </label>
+
+              <div className="control-row">
+                <button type="button" onClick={() => void dispatchPlayback('load_stream')}>
+                  Load
+                </button>
+                <button type="button" onClick={() => void dispatchPlayback('play')}>
+                  Play
+                </button>
+                <button type="button" onClick={() => void dispatchPlayback('pause')}>
+                  Pause
+                </button>
+                <button type="button" onClick={() => void dispatchPlayback('stop')}>
+                  Stop
+                </button>
+              </div>
+
+              <div className="control-grid">
+                <label className="field compact">
+                  <span>Seek position (ms)</span>
+                  <input
+                    type="number"
+                    value={seekValue}
+                    onChange={(event) => setSeekValue(Number(event.target.value))}
+                  />
+                </label>
+                <button type="button" className="secondary" onClick={() => void dispatchPlayback('seek')}>
+                  Seek
+                </button>
+                <label className="field compact">
+                  <span>Audio track</span>
+                  <select
+                    value={playerState.selectedAudioTrack ?? ''}
+                    onChange={(event) => {
+                      void tauriPlayer.selectAudioTrack(event.target.value);
+                    }}
+                    disabled={tracks.audio.length === 0}
+                  >
+                    <option value="">Default</option>
+                    {tracks.audio.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field compact">
+                  <span>Subtitle track</span>
+                  <select
+                    value={subtitleValue}
+                    onChange={(event) => {
+                      void tauriPlayer.selectSubtitleTrack(event.target.value === 'none' ? null : event.target.value);
+                    }}
+                    disabled={tracks.subtitles.length === 0}
+                  >
+                    <option value="none">Off</option>
+                    {tracks.subtitles.map((track) => (
+                      <option key={track.id} value={track.id}>
+                        {track.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+            </section>
           </section>
 
           <aside className="landing-side">
