@@ -34,6 +34,7 @@ export interface PlayerState {
   durationMs?: number | null;
   volume: number;
   muted: boolean;
+  playbackRatePercent: number;
   selectedAudioTrack?: string | null;
   selectedSubtitleTrack?: string | null;
   lastError?: string | null;

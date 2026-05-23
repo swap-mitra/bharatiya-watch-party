@@ -672,20 +672,25 @@ fn apply_playback_command(mut state: PlayerState, command: &PlaybackCommand) -> 
         app_core::PlaybackAction::LoadStream => {
             state.active_source = command.stream_url.clone();
             state.position_ms = 0;
+            state.playback_rate_percent = 100;
             state.status = app_core::PlayerStatus::Loading;
             state.last_error = None;
         }
         app_core::PlaybackAction::Play => {
+            state.playback_rate_percent = 100;
             state.status = app_core::PlayerStatus::Playing;
         }
         app_core::PlaybackAction::Pause => {
+            state.playback_rate_percent = 100;
             state.status = app_core::PlayerStatus::Paused;
         }
         app_core::PlaybackAction::Seek => {
+            state.playback_rate_percent = 100;
             state.position_ms = command.position_ms.unwrap_or(state.position_ms);
         }
         app_core::PlaybackAction::Stop => {
             state.position_ms = 0;
+            state.playback_rate_percent = 100;
             state.status = app_core::PlayerStatus::Stopped;
         }
     }

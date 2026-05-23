@@ -3,9 +3,13 @@ import type { PlaybackHeartbeat, PlayerState, RoomSession } from './types';
 export const HOST_HEARTBEAT_INTERVAL_MS = 2000;
 
 const PAUSED_DRIFT_SEEK_MS = 500;
-const PLAYING_DRIFT_SEEK_MS = 750;
-const PLAYING_DRIFT_HARD_SEEK_MS = 3000;
+const PLAYING_DRIFT_NOOP_MS = 250;
+const PLAYING_DRIFT_RATE_MS = 2500;
+const PLAYING_DRIFT_HARD_SEEK_MS = 5000;
 const MIN_CORRECTION_INTERVAL_MS = 1000;
+const NORMAL_RATE_PERCENT = 100;
+const SLOW_RATE_PERCENT = 97;
+const FAST_RATE_PERCENT = 103;
 
 const heartbeatStatuses = new Set<PlayerState['status']>(['playing', 'paused', 'buffering', 'loading']);
 
@@ -32,6 +36,7 @@ export type HeartbeatPlan =
       loadSource?: string;
       seekToMs?: number;
       playbackIntent?: PlaybackIntent;
+      playbackRatePercent?: number;
       logMessage?: string;
       correctionAtMs?: number;
     };
@@ -69,6 +74,7 @@ export function resolveHeartbeatPlan(input: ResolveHeartbeatInput): HeartbeatPla
       loadSource: heartbeat.activeSource,
       seekToMs: heartbeat.positionMs,
       playbackIntent: playbackIntentForStatus(heartbeat.status),
+      playbackRatePercent: NORMAL_RATE_PERCENT,
       logMessage: 'Synced to host source heartbeat',
     };
   }
@@ -81,6 +87,7 @@ export function resolveHeartbeatPlan(input: ResolveHeartbeatInput): HeartbeatPla
       kind: 'apply',
       seekToMs: absoluteDriftMs > PAUSED_DRIFT_SEEK_MS ? heartbeat.positionMs : undefined,
       playbackIntent: current.status === 'paused' ? undefined : 'pause',
+      playbackRatePercent: NORMAL_RATE_PERCENT,
     };
   }
 
@@ -88,15 +95,35 @@ export function resolveHeartbeatPlan(input: ResolveHeartbeatInput): HeartbeatPla
     return { kind: 'ignore' };
   }
 
-  const shouldCorrectDrift =
-    absoluteDriftMs >= PLAYING_DRIFT_SEEK_MS && nowMs - lastCorrectionAtMs >= MIN_CORRECTION_INTERVAL_MS;
+  if (absoluteDriftMs < PLAYING_DRIFT_NOOP_MS) {
+    return {
+      kind: 'apply',
+      playbackIntent: current.status === 'playing' ? undefined : 'play',
+      playbackRatePercent:
+        current.playbackRatePercent === NORMAL_RATE_PERCENT ? undefined : NORMAL_RATE_PERCENT,
+    };
+  }
+
+  if (absoluteDriftMs < PLAYING_DRIFT_RATE_MS) {
+    const playbackRatePercent = driftMs > 0 ? SLOW_RATE_PERCENT : FAST_RATE_PERCENT;
+    return {
+      kind: 'apply',
+      playbackIntent: current.status === 'playing' ? undefined : 'play',
+      playbackRatePercent:
+        current.playbackRatePercent === playbackRatePercent ? undefined : playbackRatePercent,
+      logMessage: `Smoothing ${absoluteDriftMs}ms drift at ${playbackRatePercent}% speed`,
+    };
+  }
+
+  const shouldSeek = nowMs - lastCorrectionAtMs >= MIN_CORRECTION_INTERVAL_MS;
 
   return {
     kind: 'apply',
     playbackIntent: current.status === 'playing' ? undefined : 'play',
-    seekToMs: shouldCorrectDrift ? heartbeat.positionMs : undefined,
-    correctionAtMs: shouldCorrectDrift ? nowMs : undefined,
-    logMessage: shouldCorrectDrift
+    playbackRatePercent: NORMAL_RATE_PERCENT,
+    seekToMs: shouldSeek ? heartbeat.positionMs : undefined,
+    correctionAtMs: shouldSeek ? nowMs : undefined,
+    logMessage: shouldSeek
       ? absoluteDriftMs >= PLAYING_DRIFT_HARD_SEEK_MS
         ? `Hard synced ${absoluteDriftMs}ms drift`
         : `Corrected ${absoluteDriftMs}ms drift`

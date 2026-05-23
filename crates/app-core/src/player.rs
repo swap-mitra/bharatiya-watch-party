@@ -49,6 +49,7 @@ pub struct PlayerState {
     pub duration_ms: Option<u64>,
     pub volume: u8,
     pub muted: bool,
+    pub playback_rate_percent: u16,
     pub selected_audio_track: Option<String>,
     pub selected_subtitle_track: Option<String>,
     pub last_error: Option<String>,
@@ -63,6 +64,7 @@ impl Default for PlayerState {
             duration_ms: None,
             volume: 100,
             muted: false,
+            playback_rate_percent: 100,
             selected_audio_track: None,
             selected_subtitle_track: None,
             last_error: None,
@@ -98,6 +100,7 @@ pub trait PlayerAdapter: Send + Sync {
     async fn stop(&self) -> AppResult<PlayerState>;
     async fn state(&self) -> AppResult<PlayerState>;
     async fn tracks(&self) -> AppResult<TrackCatalog>;
+    async fn set_playback_rate(&self, playback_rate_percent: u16) -> AppResult<PlayerState>;
     async fn select_audio_track(&self, track_id: String) -> AppResult<PlayerState>;
     async fn select_subtitle_track(&self, track_id: Option<String>) -> AppResult<PlayerState>;
 }

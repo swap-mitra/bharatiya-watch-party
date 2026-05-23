@@ -28,6 +28,7 @@ const initialPlayerState: PlayerState = {
   durationMs: null,
   volume: 100,
   muted: false,
+  playbackRatePercent: 100,
   selectedAudioTrack: null,
   selectedSubtitleTrack: null,
   lastError: null,
@@ -444,6 +445,9 @@ export default function App() {
     } else if (plan.playbackIntent === 'pause') {
       await tauriPlayer.pause();
     }
+    if (typeof plan.playbackRatePercent === 'number') {
+      await tauriPlayer.setPlaybackRate(plan.playbackRatePercent);
+    }
     if (typeof plan.correctionAtMs === 'number') {
       lastSyncCorrectionAtRef.current = plan.correctionAtMs;
     }
@@ -457,21 +461,26 @@ export default function App() {
       case 'load_stream':
         if (command.streamUrl) {
           await tauriPlayer.loadStream(command.streamUrl);
+          await tauriPlayer.setPlaybackRate(100);
           if (typeof command.positionMs === 'number' && command.positionMs > 0) {
             await tauriPlayer.seek(command.positionMs);
           }
         }
         return;
       case 'play':
+        await tauriPlayer.setPlaybackRate(100);
         await tauriPlayer.play();
         return;
       case 'pause':
+        await tauriPlayer.setPlaybackRate(100);
         await tauriPlayer.pause();
         return;
       case 'seek':
+        await tauriPlayer.setPlaybackRate(100);
         await tauriPlayer.seek(command.positionMs ?? 0);
         return;
       case 'stop':
+        await tauriPlayer.setPlaybackRate(100);
         await tauriPlayer.stop();
         return;
       default:
@@ -731,6 +740,10 @@ export default function App() {
                       {tracks.audio.length} audio / {tracks.subtitles.length} subtitle
                     </p>
                   </div>
+                  <div>
+                    <p className="stage-label">Speed</p>
+                    <p className="stage-value">{playerState.playbackRatePercent}%</p>
+                  </div>
                 </div>
                 <p className="stage-note">
                   Use this harness to verify load, play, pause, seek, state events, and track discovery before creating
@@ -924,6 +937,10 @@ export default function App() {
                     <p className="stage-value">
                       {tracks.audio.length} audio / {tracks.subtitles.length} subtitle
                     </p>
+                  </div>
+                  <div>
+                    <p className="stage-label">Sync speed</p>
+                    <p className="stage-value">{playerState.playbackRatePercent}%</p>
                   </div>
                 </div>
                 <p className="stage-note">

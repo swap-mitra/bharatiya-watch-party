@@ -28,6 +28,7 @@ let webState: PlayerState = {
   durationMs: null,
   volume: 100,
   muted: false,
+  playbackRatePercent: 100,
   selectedAudioTrack: null,
   selectedSubtitleTrack: null,
   lastError: null,
@@ -42,6 +43,12 @@ export const tauriPlayer = {
   stop: () => routePlayerCommand('stop', undefined, webStop),
   state: () => routePlayerCommand('player_state', undefined, async () => webState),
   tracks: () => routePlayerCommand('player_tracks', undefined, async () => emptyTracks),
+  setPlaybackRate: (playbackRatePercent: number) =>
+    routePlayerCommand(
+      'set_playback_rate',
+      { playbackRatePercent },
+      () => webSetPlaybackRate(playbackRatePercent),
+    ),
   selectAudioTrack: (trackId: string) =>
     routePlayerCommand('select_audio_track', { trackId }, async () => webState),
   selectSubtitleTrack: (trackId: string | null) =>
@@ -237,8 +244,19 @@ async function webStop(): Promise<PlayerState> {
     activeSource: null,
     positionMs: 0,
     durationMs: null,
+    playbackRatePercent: 100,
     lastError: null,
   });
+  return webState;
+}
+
+async function webSetPlaybackRate(playbackRatePercent: number): Promise<PlayerState> {
+  const normalized = Number.isFinite(playbackRatePercent) ? Math.round(playbackRatePercent) : 100;
+  const clamped = Math.max(90, Math.min(110, normalized));
+  if (webVideoElement) {
+    webVideoElement.playbackRate = clamped / 100;
+  }
+  updateWebState({ playbackRatePercent: clamped });
   return webState;
 }
 
@@ -259,6 +277,7 @@ function syncWebStateFromElement(element: HTMLVideoElement, forcedStatus?: Playe
     durationMs,
     volume: Math.round(element.volume * 100),
     muted: element.muted,
+    playbackRatePercent: Math.round(element.playbackRate * 100),
     lastError: null,
   });
 }

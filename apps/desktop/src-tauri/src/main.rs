@@ -175,6 +175,7 @@ impl MpvAdapter {
             duration_ms: None,
             volume: 100,
             muted: false,
+            playback_rate_percent: 100,
             selected_audio_track: None,
             selected_subtitle_track: None,
             last_error: None,
@@ -223,6 +224,7 @@ impl PlayerAdapter for MpvAdapter {
                     duration_ms: None,
                     volume: 100,
                     muted: false,
+                    playback_rate_percent: 100,
                     selected_audio_track,
                     selected_subtitle_track,
                     last_error: None,
@@ -314,6 +316,22 @@ impl PlayerAdapter for MpvAdapter {
             let _ = self.refresh_from_backend();
         }
         Ok(self.snapshot_tracks())
+    }
+
+    async fn set_playback_rate(&self, playback_rate_percent: u16) -> AppResult<PlayerState> {
+        let playback_rate_percent = playback_rate_percent.clamp(90, 110);
+        match &self.backend {
+            PlaybackBackend::Real(backend) => {
+                backend.set_playback_rate(playback_rate_percent)?;
+                let _ = self.refresh_from_backend();
+                Ok(self.snapshot_state())
+            }
+            PlaybackBackend::Mock => {
+                let mut state = self.state.write();
+                state.playback_rate_percent = playback_rate_percent;
+                Ok(state.clone())
+            }
+        }
     }
 
     async fn select_audio_track(&self, track_id: String) -> AppResult<PlayerState> {
@@ -426,6 +444,11 @@ impl RealMpvBackend {
             .set_property_string("sid", track_id.unwrap_or("no"))
     }
 
+    fn set_playback_rate(&self, playback_rate_percent: u16) -> AppResult<()> {
+        let speed = format!("{:.2}", playback_rate_percent as f64 / 100.0);
+        self.client.lock().set_property_string("speed", &speed)
+    }
+
     fn snapshot(&self) -> AppResult<(PlayerState, TrackCatalog)> {
         let client = self.client.lock();
         let active_source = client.get_property_string("path")?;
@@ -444,6 +467,10 @@ impl RealMpvBackend {
             .map(|value| value.round().clamp(0.0, 100.0) as u8)
             .unwrap_or(100);
         let muted = client.get_property_bool("mute")?.unwrap_or(false);
+        let playback_rate_percent = client
+            .get_property_f64("speed")?
+            .map(|value| (value * 100.0).round().clamp(90.0, 110.0) as u16)
+            .unwrap_or(100);
         let tracks = client.track_catalog()?;
         let selected_audio_track = tracks
             .audio
@@ -477,6 +504,7 @@ impl RealMpvBackend {
                 duration_ms,
                 volume,
                 muted,
+                playback_rate_percent,
                 selected_audio_track,
                 selected_subtitle_track,
                 last_error: None,
@@ -822,6 +850,21 @@ async fn player_tracks(state: State<'_, DesktopState>) -> Result<TrackCatalog, S
 }
 
 #[tauri::command]
+async fn set_playback_rate(
+    app: AppHandle,
+    state: State<'_, DesktopState>,
+    playback_rate_percent: u16,
+) -> Result<PlayerState, String> {
+    let player = Arc::clone(&state.inner().player);
+    let next_state = player
+        .set_playback_rate(playback_rate_percent)
+        .await
+        .map_err(to_string_error)?;
+    emit_snapshot(&app, &player).map_err(to_string_error)?;
+    Ok(next_state)
+}
+
+#[tauri::command]
 async fn select_audio_track(
     app: AppHandle,
     state: State<'_, DesktopState>,
@@ -903,6 +946,7 @@ pub fn run() {
             stop,
             player_state,
             player_tracks,
+            set_playback_rate,
             select_audio_track,
             select_subtitle_track,
         ])
