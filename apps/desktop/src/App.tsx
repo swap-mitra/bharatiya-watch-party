@@ -37,6 +37,7 @@ const initialPlayerState: PlayerState = {
 const initialTracks: TrackCatalog = { audio: [], subtitles: [] };
 const MAX_RECONNECT_ATTEMPTS = 5;
 const RECONNECT_BASE_DELAY_MS = 1500;
+const CHAT_HISTORY_LIMIT = 50;
 
 export default function App() {
   const socketRef = useRef<WebSocket | null>(null);
@@ -355,6 +356,7 @@ export default function App() {
     switch (message.type) {
       case 'welcome': {
         applyRoomSnapshot(message.payload.room);
+        setChatMessages((current) => mergeChatMessages(current, message.payload.chatHistory));
         await syncPlayerFromSnapshot(message.payload.playback);
         pushEvent(`Presence synced for ${message.payload.room.roomCode}`);
         return;
@@ -364,7 +366,7 @@ export default function App() {
         return;
       }
       case 'chat': {
-        setChatMessages((current) => [...current.slice(-39), message.payload]);
+        setChatMessages((current) => mergeChatMessages(current, message.payload));
         return;
       }
       case 'playback': {
@@ -562,7 +564,7 @@ export default function App() {
     try {
       sendEnvelope(socketRef.current, {
         type: 'chat_send',
-        payload: { text: chatDraft.trim() },
+        payload: { id: createClientMessageId(), text: chatDraft.trim() },
       });
       setChatDraft('');
     } catch (error) {
@@ -1151,6 +1153,31 @@ function buildRoomSession(session: CreateRoomResponse | JoinRoomResponse): RoomS
     role: session.role,
     maxViewers: session.maxViewers,
   };
+}
+
+function createClientMessageId(): string {
+  if (globalThis.crypto?.randomUUID) {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage | ChatMessage[]): ChatMessage[] {
+  const messages = Array.isArray(incoming) ? incoming : [incoming];
+  if (messages.length === 0) {
+    return current;
+  }
+
+  const seen = new Set(current.map((message) => message.id));
+  const merged = [...current];
+  for (const message of messages) {
+    if (seen.has(message.id)) {
+      continue;
+    }
+    seen.add(message.id);
+    merged.push(message);
+  }
+  return merged.slice(-CHAT_HISTORY_LIMIT);
 }
 
 function deriveSurfaceState(

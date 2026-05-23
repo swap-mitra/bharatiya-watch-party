@@ -97,7 +97,7 @@ export interface ChatMessage {
 export type ClientEnvelope =
   | { type: 'ping' }
   | { type: 'ready_state'; payload: { ready: boolean } }
-  | { type: 'chat_send'; payload: { text: string } }
+  | { type: 'chat_send'; payload: { id: string; text: string } }
   | { type: 'playback_command'; payload: PlaybackCommand }
   | { type: 'playback_heartbeat'; payload: PlaybackHeartbeat }
   | { type: 'close_room' };
@@ -109,6 +109,7 @@ export type ServerEnvelope =
         room: RoomSnapshot;
         playback: PlayerState;
         selfSessionId: string;
+        chatHistory: ChatMessage[];
       };
     }
   | { type: 'presence'; payload: RoomSnapshot }

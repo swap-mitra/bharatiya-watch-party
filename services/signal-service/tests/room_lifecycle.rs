@@ -418,6 +418,95 @@ async fn reconnect_uses_the_same_session_id() {
     }
 }
 
+#[tokio::test]
+async fn duplicate_chat_ids_are_suppressed() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+
+    let (host_tx, mut host_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+
+    for _ in 0..2 {
+        registry
+            .handle_client_message(
+                &created.room_code,
+                &created.session_id,
+                ClientMessage::ChatSend {
+                    id: "chat-1".into(),
+                    text: "Hello room".into(),
+                },
+            )
+            .expect("chat should be accepted");
+    }
+
+    let first_chat = recv_until(
+        &mut host_rx,
+        |message| matches!(message, ServerMessage::Chat(chat) if chat.id == "chat-1"),
+    )
+    .await
+    .expect("first chat should broadcast");
+    assert!(matches!(first_chat, ServerMessage::Chat(_)));
+
+    let duplicate = recv_until(
+        &mut host_rx,
+        |message| matches!(message, ServerMessage::Chat(chat) if chat.id == "chat-1"),
+    )
+    .await;
+    assert!(
+        duplicate.is_none(),
+        "duplicate chat id should not rebroadcast"
+    );
+}
+
+#[tokio::test]
+async fn reconnect_welcome_includes_recent_chat_history() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let viewer = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &created.session_id,
+            ClientMessage::ChatSend {
+                id: "chat-history-1".into(),
+                text: "Bring popcorn".into(),
+            },
+        )
+        .expect("chat should be accepted");
+
+    let (viewer_tx, _viewer_rx) = mpsc::unbounded_channel();
+    let welcome = registry
+        .connect(created.room_code.clone(), viewer.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    match welcome {
+        ServerMessage::Welcome { chat_history, .. } => {
+            assert_eq!(chat_history.len(), 1);
+            assert_eq!(chat_history[0].id, "chat-history-1");
+            assert_eq!(chat_history[0].text, "Bring popcorn");
+        }
+        _ => panic!("expected welcome message"),
+    }
+}
+
 async fn recv_until(
     receiver: &mut mpsc::UnboundedReceiver<ServerMessage>,
     predicate: impl Fn(&ServerMessage) -> bool,

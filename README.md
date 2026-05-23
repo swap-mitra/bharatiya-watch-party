@@ -40,6 +40,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Reconnect-aware desktop room experience with dedicated lobby, reconnecting, and closed-room surfaces
 - Host-authoritative playback heartbeats with conservative viewer drift correction and late-join timeline snapshots
 - Playback-rate smoothing for medium drift before falling back to seek correction
+- Duplicate-suppressed room chat with bounded recent-history replay for reconnecting and late-joining clients
 - Frontend sync policy extracted into `apps/desktop/src/lib/playbackSync.ts` so heartbeat and drift behavior can evolve independently of the UI shell
 - CI for Rust and frontend checks
 
@@ -63,6 +64,8 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - Watch-room UI, create/join validation, room code sharing, readiness, compact chat, and host/viewer control states are built.
 - Sprint 5: implemented in code
   - Host heartbeats, late-join sync, drift correction, playback-rate smoothing, and speed reset behavior are built.
+- Sprint 6: implemented in code
+  - Text chat, presence, viewer reconnect, duplicate message suppression, and bounded chat replay are built.
 
 ## Native Playback Notes
 
@@ -91,7 +94,7 @@ The browser fallback is intended for local development and smoke testing. It sup
 ## Current Gaps
 
 - Playback synchronization now has host heartbeats, playback-rate smoothing, and seek-based drift correction; measured threshold tuning is still pending
-- TURN/STUN, hosted fallback transport strategy, and deeper observability are not implemented yet
+- TURN/STUN, hosted fallback transport strategy, performance testing, and deeper observability are not implemented yet
 - Packaging and bundling of `libmpv` for distribution still needs to be finished for release builds
 
 ## Detailed Tracking

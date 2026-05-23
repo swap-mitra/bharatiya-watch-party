@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -29,6 +29,9 @@ use tracing::{info, warn};
 
 const DEFAULT_ROOM_TTL_SECONDS: u64 = 60 * 60 * 4;
 const MAX_CHAT_LENGTH: usize = 500;
+const MAX_CHAT_ID_LENGTH: usize = 128;
+const CHAT_HISTORY_LIMIT: usize = 50;
+const RECENT_CHAT_ID_LIMIT: usize = 200;
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
@@ -244,6 +247,8 @@ impl RoomRegistry {
                 playback: PlayerState::default(),
                 last_sequence: 0,
                 expires_at_ms: now_ms() + (self.config.room_ttl.as_millis() as u64),
+                chat_history: VecDeque::new(),
+                recent_chat_ids: VecDeque::new(),
             },
         );
 
@@ -319,12 +324,14 @@ impl RoomRegistry {
         room.touch(self.config.room_ttl);
         let snapshot = room.snapshot(room_code.clone());
         let playback = room.playback.clone();
+        let chat_history = room.chat_history();
         drop(rooms);
         self.broadcast_room_snapshot(&room_code);
         Ok(ServerMessage::Welcome {
             room: snapshot,
             playback,
             self_session_id: session_id,
+            chat_history,
         })
     }
 
@@ -391,17 +398,25 @@ impl RoomRegistry {
                 self.broadcast(room_code, ServerMessage::Presence(snapshot));
                 Ok(())
             }
-            ClientMessage::ChatSend { text } => {
+            ClientMessage::ChatSend { id, text } => {
                 let trimmed = text.trim();
                 if trimmed.is_empty() || trimmed.len() > MAX_CHAT_LENGTH {
                     return Err(AppError::Validation(
                         "chat messages must be between 1 and 500 characters".into(),
                     ));
                 }
+                if id.trim().is_empty() || id.len() > MAX_CHAT_ID_LENGTH {
+                    return Err(AppError::Validation(
+                        "chat message id must be between 1 and 128 characters".into(),
+                    ));
+                }
 
                 let chat_message = {
                     let mut rooms = self.rooms.write();
                     let room = rooms.get_mut(room_code).ok_or(AppError::RoomNotFound)?;
+                    if room.has_recent_chat_id(&id) {
+                        return Ok(());
+                    }
                     let sender_display_name = room
                         .participants
                         .get(session_id)
@@ -410,13 +425,15 @@ impl RoomRegistry {
                         .display_name
                         .clone();
                     room.touch(self.config.room_ttl);
-                    ChatMessage {
-                        id: uuid::Uuid::new_v4().to_string(),
+                    let chat_message = ChatMessage {
+                        id,
                         sender_session_id: *session_id,
                         sender_display_name,
                         text: trimmed.to_string(),
                         sent_at_ms: now_ms(),
-                    }
+                    };
+                    room.remember_chat_message(chat_message.clone());
+                    chat_message
                 };
                 self.broadcast(room_code, ServerMessage::Chat(chat_message));
                 Ok(())
@@ -597,6 +614,8 @@ struct RoomRecord {
     playback: PlayerState,
     last_sequence: u64,
     expires_at_ms: u64,
+    chat_history: VecDeque<ChatMessage>,
+    recent_chat_ids: VecDeque<String>,
 }
 
 impl RoomRecord {
@@ -624,6 +643,28 @@ impl RoomRecord {
 
     fn touch(&mut self, ttl: Duration) {
         self.expires_at_ms = now_ms() + (ttl.as_millis() as u64);
+    }
+
+    fn chat_history(&self) -> Vec<ChatMessage> {
+        self.chat_history.iter().cloned().collect()
+    }
+
+    fn has_recent_chat_id(&self, id: &str) -> bool {
+        self.recent_chat_ids
+            .iter()
+            .any(|existing_id| existing_id == id)
+    }
+
+    fn remember_chat_message(&mut self, message: ChatMessage) {
+        self.recent_chat_ids.push_back(message.id.clone());
+        while self.recent_chat_ids.len() > RECENT_CHAT_ID_LIMIT {
+            self.recent_chat_ids.pop_front();
+        }
+
+        self.chat_history.push_back(message);
+        while self.chat_history.len() > CHAT_HISTORY_LIMIT {
+            self.chat_history.pop_front();
+        }
     }
 
     fn active_senders(&self) -> Vec<mpsc::UnboundedSender<ServerMessage>> {

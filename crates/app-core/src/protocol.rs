@@ -99,7 +99,7 @@ pub enum RoomCloseReason {
 pub enum ClientMessage {
     Ping,
     ReadyState { ready: bool },
-    ChatSend { text: String },
+    ChatSend { id: String, text: String },
     PlaybackCommand(PlaybackCommand),
     PlaybackHeartbeat(PlaybackHeartbeat),
     CloseRoom,
@@ -112,6 +112,7 @@ pub enum ServerMessage {
         room: RoomSnapshot,
         playback: PlayerState,
         self_session_id: SessionId,
+        chat_history: Vec<ChatMessage>,
     },
     Presence(RoomSnapshot),
     Chat(ChatMessage),
@@ -169,6 +170,7 @@ mod tests {
                 ..PlayerState::default()
             },
             self_session_id: session_id,
+            chat_history: Vec::new(),
         };
 
         let encoded = serde_json::to_string(&message).expect("serializes");
