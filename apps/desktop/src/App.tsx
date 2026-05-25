@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Component, type ErrorInfo, type ReactNode, useEffect, useMemo, useRef, useState } from 'react';
 
 import { buildHostHeartbeat, HOST_HEARTBEAT_INTERVAL_MS, resolveHeartbeatPlan } from './lib/playbackSync';
 import { connectRoomSocket, createRoom, joinRoom, sendEnvelope } from './lib/roomClient';
@@ -40,6 +40,14 @@ const RECONNECT_BASE_DELAY_MS = 1500;
 const CHAT_HISTORY_LIMIT = 50;
 
 export default function App() {
+  return (
+    <AppErrorBoundary>
+      <WatchPartyApp />
+    </AppErrorBoundary>
+  );
+}
+
+function WatchPartyApp() {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const heartbeatTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -61,7 +69,6 @@ export default function App() {
   const [roomSnapshot, setRoomSnapshot] = useState<RoomSnapshot | null>(null);
   const [transportState, setTransportState] = useState<TransportState>('idle');
   const [roomClosedReason, setRoomClosedReason] = useState<RoomCloseReason | null>(null);
-  const [eventLog, setEventLog] = useState<string[]>(['Desktop shell ready']);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [streamUrl, setStreamUrl] = useState(
     'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
@@ -356,7 +363,7 @@ export default function App() {
     switch (message.type) {
       case 'welcome': {
         applyRoomSnapshot(message.payload.room);
-        setChatMessages((current) => mergeChatMessages(current, message.payload.chatHistory));
+        setChatMessages((current) => mergeChatMessages(current, message.payload.chatHistory ?? []));
         await syncPlayerFromSnapshot(message.payload.playback);
         pushEvent(`Presence synced for ${message.payload.room.roomCode}`);
         return;
@@ -615,7 +622,7 @@ export default function App() {
   }
 
   function pushEvent(message: string) {
-    setEventLog((current) => [message, ...current].slice(0, 10));
+    console.info(`[watch-party] ${message}`);
   }
 
   return (
@@ -623,19 +630,9 @@ export default function App() {
       <header className="topbar">
         <div>
           <p className="eyebrow">Bharatiya Watch Party</p>
-          <h1>{roomSession ? 'Room session' : 'Desktop watch party client'}</h1>
+          <h1>{roomSession ? 'Watch room' : 'Watch together'}</h1>
         </div>
         <div className="topbar-meta">
-          <span>Surface {surfaceState}</span>
-          <span>{describeTransportState(transportState)}</span>
-          <span>{formatPlayerBackend(playerBackend)}</span>
-          <button
-            type="button"
-            className="ghost-button"
-            onClick={() => setMode((current) => (current === 'standard' ? 'theater' : 'standard'))}
-          >
-            {mode === 'standard' ? 'Theater mode' : 'Standard mode'}
-          </button>
           {roomSession ? (
             <button type="button" className="ghost-button" onClick={leaveRoom}>
               Leave room
@@ -647,12 +644,8 @@ export default function App() {
       {!roomSession ? (
         <main className="landing-layout">
           <section className="landing-main">
-            <p className="eyebrow">Private rooms, direct streams, tight sync</p>
-            <h2>Create a room or step into one with a short code.</h2>
-            <p className="lead-copy">
-              The desktop shell now covers room lifecycle, host-controlled playback, reconnect handling, readiness,
-              and text chat.
-            </p>
+            <p className="eyebrow">Direct streams. Shared timeline.</p>
+            <h2>Create a room or join with a code.</h2>
 
             <div className="split-actions">
               <section className="action-pane">
@@ -711,8 +704,8 @@ export default function App() {
             <section className="player-panel local-player-panel">
               <div className="panel-head">
                 <div>
-                  <p className="eyebrow">Sprint 3 harness</p>
-                  <h2>Test local playback</h2>
+                  <p className="eyebrow">Local player</p>
+                  <h2>Test a stream</h2>
                 </div>
                 <span className={`status-pill ${playerState.status}`}>{statusLabel}</span>
               </div>
@@ -747,10 +740,6 @@ export default function App() {
                     <p className="stage-value">{playerState.playbackRatePercent}%</p>
                   </div>
                 </div>
-                <p className="stage-note">
-                  Use this harness to verify load, play, pause, seek, state events, and track discovery before creating
-                  a room.
-                </p>
               </div>
 
               <label className="field">
@@ -826,30 +815,6 @@ export default function App() {
               </div>
             </section>
           </section>
-
-          <aside className="landing-side">
-            <div className="landing-rail">
-              <p className="eyebrow">Current foundation</p>
-              <ul className="feature-list">
-                <li>Rust room service with host authority, explicit room closure, and viewer limits</li>
-                <li>Tauri desktop shell with reconnect-aware room state and a native player bridge</li>
-                <li>Live room experience with lobby, chat, readiness, and theater layout</li>
-              </ul>
-            </div>
-            <div className="landing-rail subtle">
-              <p className="eyebrow">Playback backend</p>
-              <ul className="feature-list compact-list">
-                <li>
-                  {playerBackend === 'libmpv'
-                    ? 'Native playback is available through libmpv'
-                    : 'Browser video fallback is active until libmpv is installed or bundled'}
-                </li>
-                <li>Native playback currently opens through mpv's own window while the desktop shell controls it</li>
-                <li>Fallback playback supports MP4/WebM and browser-native HLS; DASH requires native playback</li>
-                <li>Room and player contracts stay the same regardless of backend mode</li>
-              </ul>
-            </div>
-          </aside>
         </main>
       ) : (
         <main className="workspace">
@@ -910,8 +875,14 @@ export default function App() {
                   <h2>{playerState.activeSource ? 'Watch surface' : 'Lobby stage'}</h2>
                 </div>
                 <div className="panel-actions">
-                  <span className="authority-pill">{isHost ? 'Host controls enabled' : 'Following host'}</span>
                   <span className={`status-pill ${playerState.status}`}>{statusLabel}</span>
+                  <button
+                    type="button"
+                    className="mode-button"
+                    onClick={() => setMode((current) => (current === 'standard' ? 'theater' : 'standard'))}
+                  >
+                    {mode === 'standard' ? 'Theater' : 'Standard'}
+                  </button>
                 </div>
               </div>
 
@@ -945,23 +916,7 @@ export default function App() {
                     <p className="stage-value">{playerState.playbackRatePercent}%</p>
                   </div>
                 </div>
-                <p className="stage-note">
-                  {isHost
-                    ? 'Load a direct URL, check readiness, then start playback for everyone in the room.'
-                    : 'Playback is controlled by the host. Keep this window open and use chat while you wait.'}
-                </p>
               </div>
-
-              <section className={`control-notice ${canOperatePlayer ? 'active' : 'locked'}`}>
-                <strong>{canOperatePlayer ? 'Playback controls are available.' : 'Playback controls are locked.'}</strong>
-                <span>
-                  {canOperatePlayer
-                    ? roomSession.role === 'host'
-                      ? 'Host actions will be sent to every viewer.'
-                      : 'Local mode can control playback before joining a room.'
-                    : 'Viewers receive host playback commands automatically.'}
-                </span>
-              </section>
 
               <label className="field">
                 <span>Direct media URL</span>
@@ -1119,31 +1074,39 @@ export default function App() {
               </footer>
             </aside>
           </section>
-
-          <footer className="bottom-strip">
-            <section>
-              <p className="eyebrow">Event log</p>
-              <ul>
-                {eventLog.map((entry) => (
-                  <li key={entry}>{entry}</li>
-                ))}
-              </ul>
-            </section>
-            <section>
-              <p className="eyebrow">Session detail</p>
-              <p>{describeTransportState(transportState)}</p>
-              <p>{roomSession.role === 'host' ? 'Host authority enabled' : 'Viewer following host timeline'}</p>
-              <p>
-                {playerBackend === 'libmpv'
-                  ? 'Playback opens through native libmpv'
-                  : 'Playback is running on the browser video fallback'}
-              </p>
-            </section>
-          </footer>
         </main>
       )}
     </div>
   );
+}
+
+class AppErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state: { error: Error | null } = { error: null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error('[watch-party] UI crashed', error, info);
+  }
+
+  render() {
+    if (this.state.error) {
+      return (
+        <main className="app-crash">
+          <p className="eyebrow">UI fault</p>
+          <h1>Something broke in the room surface.</h1>
+          <p>{this.state.error.message}</p>
+          <button type="button" onClick={() => this.setState({ error: null })}>
+            Try again
+          </button>
+        </main>
+      );
+    }
+
+    return this.props.children;
+  }
 }
 
 function buildRoomSession(session: CreateRoomResponse | JoinRoomResponse): RoomSession {
@@ -1162,8 +1125,8 @@ function createClientMessageId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage | ChatMessage[]): ChatMessage[] {
-  const messages = Array.isArray(incoming) ? incoming : [incoming];
+function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage | ChatMessage[] | null | undefined): ChatMessage[] {
+  const messages = Array.isArray(incoming) ? incoming : incoming ? [incoming] : [];
   if (messages.length === 0) {
     return current;
   }
@@ -1171,6 +1134,9 @@ function mergeChatMessages(current: ChatMessage[], incoming: ChatMessage | ChatM
   const seen = new Set(current.map((message) => message.id));
   const merged = [...current];
   for (const message of messages) {
+    if (!message?.id) {
+      continue;
+    }
     if (seen.has(message.id)) {
       continue;
     }
@@ -1222,31 +1188,6 @@ function formatCloseReason(reason: RoomCloseReason): string {
     default:
       return String(reason).replace(/_/g, ' ');
   }
-}
-
-function describeTransportState(transportState: TransportState): string {
-  switch (transportState) {
-    case 'connected':
-      return 'Realtime linked';
-    case 'connecting':
-      return 'Joining room';
-    case 'reconnecting':
-      return 'Reconnecting to room';
-    case 'closed':
-      return 'Room connection closed';
-    default:
-      return 'Local mode';
-  }
-}
-
-function formatPlayerBackend(backend: string): string {
-  if (backend === 'libmpv') {
-    return 'Native libmpv';
-  }
-  if (backend === 'web-video') {
-    return 'Browser video';
-  }
-  return 'Mock player';
 }
 
 function deriveRoomErrorTitle(message: string): string {

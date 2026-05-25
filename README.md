@@ -29,6 +29,15 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - compact chat character limits
   - host/viewer playback authority messaging
   - Tauri player command/event bridge
+- Restrained neo-brutalist UI redesign with:
+  - player-first room composition
+  - chat as the primary room rail
+  - theater toggle colocated with the player
+  - reduced diagnostics and nonessential copy in the main experience
+  - muted dark palette, hard borders, and minimal accent color
+- UI resilience for room entry:
+  - welcome payloads tolerate missing chat history from stale/local signal-service builds
+  - React error boundary shows a recoverable app-level fault screen instead of the default crash page
 - Sprint 3 native playback foundation with:
   - `PlayerAdapter` contract in the shared Rust domain crate
   - dynamic `libmpv` loading in the Tauri backend
