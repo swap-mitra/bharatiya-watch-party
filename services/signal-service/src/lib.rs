@@ -1,7 +1,8 @@
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use app_core::{
@@ -22,7 +23,7 @@ use axum::{
 };
 use futures::{sink::SinkExt, stream::StreamExt};
 use parking_lot::RwLock;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
@@ -42,6 +43,104 @@ impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
             room_ttl: Duration::from_secs(DEFAULT_ROOM_TTL_SECONDS),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ServiceMetrics {
+    room_create_count: AtomicU64,
+    room_join_count: AtomicU64,
+    websocket_connect_count: AtomicU64,
+    reconnect_count: AtomicU64,
+    disconnect_count: AtomicU64,
+    room_close_count: AtomicU64,
+    room_expiration_count: AtomicU64,
+    playback_command_count: AtomicU64,
+    playback_heartbeat_count: AtomicU64,
+    chat_message_count: AtomicU64,
+    unauthorized_message_count: AtomicU64,
+    validation_failure_count: AtomicU64,
+    stream_validation_failure_count: AtomicU64,
+    outbound_message_count: AtomicU64,
+    outbound_send_failure_count: AtomicU64,
+    playback_fanout_count: AtomicU64,
+    playback_fanout_total_ms: AtomicU64,
+    playback_fanout_max_ms: AtomicU64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ServiceMetricsSnapshot {
+    pub room_create_count: u64,
+    pub room_join_count: u64,
+    pub active_room_count: u64,
+    pub active_participant_count: u64,
+    pub websocket_connect_count: u64,
+    pub reconnect_count: u64,
+    pub disconnect_count: u64,
+    pub room_close_count: u64,
+    pub room_expiration_count: u64,
+    pub playback_command_count: u64,
+    pub playback_heartbeat_count: u64,
+    pub chat_message_count: u64,
+    pub unauthorized_message_count: u64,
+    pub validation_failure_count: u64,
+    pub stream_validation_failure_count: u64,
+    pub outbound_message_count: u64,
+    pub outbound_send_failure_count: u64,
+    pub playback_fanout_count: u64,
+    pub playback_fanout_total_ms: u64,
+    pub playback_fanout_max_ms: u64,
+}
+
+impl ServiceMetrics {
+    fn increment(counter: &AtomicU64) {
+        counter.fetch_add(1, Ordering::Relaxed);
+    }
+
+    fn add(counter: &AtomicU64, value: u64) {
+        counter.fetch_add(value, Ordering::Relaxed);
+    }
+
+    fn record_max(counter: &AtomicU64, value: u64) {
+        let mut current = counter.load(Ordering::Relaxed);
+        while value > current {
+            match counter.compare_exchange(current, value, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(next_current) => current = next_current,
+            }
+        }
+    }
+
+    fn snapshot(
+        &self,
+        active_room_count: u64,
+        active_participant_count: u64,
+    ) -> ServiceMetricsSnapshot {
+        ServiceMetricsSnapshot {
+            room_create_count: self.room_create_count.load(Ordering::Relaxed),
+            room_join_count: self.room_join_count.load(Ordering::Relaxed),
+            active_room_count,
+            active_participant_count,
+            websocket_connect_count: self.websocket_connect_count.load(Ordering::Relaxed),
+            reconnect_count: self.reconnect_count.load(Ordering::Relaxed),
+            disconnect_count: self.disconnect_count.load(Ordering::Relaxed),
+            room_close_count: self.room_close_count.load(Ordering::Relaxed),
+            room_expiration_count: self.room_expiration_count.load(Ordering::Relaxed),
+            playback_command_count: self.playback_command_count.load(Ordering::Relaxed),
+            playback_heartbeat_count: self.playback_heartbeat_count.load(Ordering::Relaxed),
+            chat_message_count: self.chat_message_count.load(Ordering::Relaxed),
+            unauthorized_message_count: self.unauthorized_message_count.load(Ordering::Relaxed),
+            validation_failure_count: self.validation_failure_count.load(Ordering::Relaxed),
+            stream_validation_failure_count: self
+                .stream_validation_failure_count
+                .load(Ordering::Relaxed),
+            outbound_message_count: self.outbound_message_count.load(Ordering::Relaxed),
+            outbound_send_failure_count: self.outbound_send_failure_count.load(Ordering::Relaxed),
+            playback_fanout_count: self.playback_fanout_count.load(Ordering::Relaxed),
+            playback_fanout_total_ms: self.playback_fanout_total_ms.load(Ordering::Relaxed),
+            playback_fanout_max_ms: self.playback_fanout_max_ms.load(Ordering::Relaxed),
         }
     }
 }
@@ -77,6 +176,8 @@ pub fn app_router(state: AppState) -> Router {
 
     Router::new()
         .route("/health", get(healthcheck))
+        .route("/metrics", get(metrics))
+        .route("/networking", get(networking))
         .route("/api/rooms", post(create_room))
         .route("/api/rooms/{room_code}/join", post(join_room))
         .route("/ws", get(ws_handler))
@@ -88,11 +189,44 @@ async fn healthcheck() -> impl IntoResponse {
     Json(serde_json::json!({ "ok": true }))
 }
 
+async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
+    Json(state.registry.metrics_snapshot())
+}
+
+async fn networking() -> impl IntoResponse {
+    Json(NetworkingSnapshot {
+        signaling_transport: "websocket",
+        media_transport: "direct-client-fetch",
+        webrtc_enabled: false,
+        stun_configured: false,
+        turn_configured: false,
+        fallback_transport: "hosted-websocket-signaling",
+    })
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NetworkingSnapshot {
+    pub signaling_transport: &'static str,
+    pub media_transport: &'static str,
+    pub webrtc_enabled: bool,
+    pub stun_configured: bool,
+    pub turn_configured: bool,
+    pub fallback_transport: &'static str,
+}
+
 async fn create_room(
     State(state): State<AppState>,
     Json(request): Json<CreateRoomRequest>,
 ) -> Result<Json<CreateRoomResponse>, ApiError> {
-    Ok(Json(state.registry.create_room(request)?))
+    let started_at = Instant::now();
+    let response = state.registry.create_room(request)?;
+    info!(
+        room_code = %response.room_code,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "http_room_create_completed"
+    );
+    Ok(Json(response))
 }
 
 async fn join_room(
@@ -100,8 +234,16 @@ async fn join_room(
     Path(room_code): Path<String>,
     Json(request): Json<JoinRoomRequest>,
 ) -> Result<Json<JoinRoomResponse>, ApiError> {
+    let started_at = Instant::now();
     let room_code = RoomCode::parse(room_code)?;
-    Ok(Json(state.registry.reserve_viewer(room_code, request)?))
+    let response = state.registry.reserve_viewer(room_code, request)?;
+    info!(
+        room_code = %response.room_code,
+        session_id = %response.session_id,
+        elapsed_ms = started_at.elapsed().as_millis() as u64,
+        "http_room_join_completed"
+    );
+    Ok(Json(response))
 }
 
 #[derive(Debug, Deserialize)]
@@ -211,6 +353,7 @@ async fn client_session(
 pub struct RoomRegistry {
     config: ServiceConfig,
     rooms: RwLock<HashMap<RoomCode, RoomRecord>>,
+    metrics: ServiceMetrics,
 }
 
 impl RoomRegistry {
@@ -218,11 +361,27 @@ impl RoomRegistry {
         Self {
             config,
             rooms: RwLock::new(HashMap::new()),
+            metrics: ServiceMetrics::default(),
         }
     }
 
+    pub fn metrics_snapshot(&self) -> ServiceMetricsSnapshot {
+        let rooms = self.rooms.read();
+        let active_room_count = rooms.len() as u64;
+        let active_participant_count = rooms
+            .values()
+            .flat_map(|room| room.participants.values())
+            .filter(|participant| participant.participant.connected)
+            .count() as u64;
+        self.metrics
+            .snapshot(active_room_count, active_participant_count)
+    }
+
     pub fn create_room(&self, request: CreateRoomRequest) -> AppResult<CreateRoomResponse> {
-        validation::validate_display_name(&request.display_name)?;
+        if let Err(err) = validation::validate_display_name(&request.display_name) {
+            ServiceMetrics::increment(&self.metrics.validation_failure_count);
+            return Err(err);
+        }
 
         let mut rooms = self.rooms.write();
         let mut room_code = RoomCode::generate();
@@ -252,6 +411,13 @@ impl RoomRegistry {
             },
         );
 
+        ServiceMetrics::increment(&self.metrics.room_create_count);
+        info!(
+            room_code = %room_code,
+            session_id = %session_id,
+            "room_created"
+        );
+
         Ok(CreateRoomResponse {
             room_code,
             session_id,
@@ -266,7 +432,10 @@ impl RoomRegistry {
         room_code: RoomCode,
         request: JoinRoomRequest,
     ) -> AppResult<JoinRoomResponse> {
-        validation::validate_display_name(&request.display_name)?;
+        if let Err(err) = validation::validate_display_name(&request.display_name) {
+            ServiceMetrics::increment(&self.metrics.validation_failure_count);
+            return Err(err);
+        }
         let mut rooms = self.rooms.write();
         self.prune_if_expired_locked(&mut rooms, &room_code);
         let room = rooms.get_mut(&room_code).ok_or(AppError::RoomNotFound)?;
@@ -298,6 +467,13 @@ impl RoomRegistry {
 
         room.touch(self.config.room_ttl);
         let snapshot = room.snapshot(room_code.clone());
+        ServiceMetrics::increment(&self.metrics.room_join_count);
+        info!(
+            room_code = %room_code,
+            session_id = %session_id,
+            viewer_count = room.viewer_count(),
+            "viewer_reserved"
+        );
         Ok(JoinRoomResponse {
             room_code,
             session_id,
@@ -319,13 +495,25 @@ impl RoomRegistry {
             .participants
             .get_mut(&session_id)
             .ok_or(AppError::ParticipantNotFound)?;
+        let is_reconnect = participant.connection_count > 0;
         participant.participant.connected = true;
         participant.sender = Some(sender);
+        participant.connection_count += 1;
         room.touch(self.config.room_ttl);
         let snapshot = room.snapshot(room_code.clone());
         let playback = room.playback.clone();
         let chat_history = room.chat_history();
         drop(rooms);
+        ServiceMetrics::increment(&self.metrics.websocket_connect_count);
+        if is_reconnect {
+            ServiceMetrics::increment(&self.metrics.reconnect_count);
+        }
+        info!(
+            room_code = %room_code,
+            session_id = %session_id,
+            reconnect = is_reconnect,
+            "session_connected"
+        );
         self.broadcast_room_snapshot(&room_code);
         Ok(ServerMessage::Welcome {
             room: snapshot,
@@ -343,9 +531,19 @@ impl RoomRegistry {
 
         if let Some(room) = rooms.get_mut(room_code) {
             if let Some(record) = room.participants.get_mut(session_id) {
+                let was_connected = record.participant.connected || record.sender.is_some();
                 record.participant.connected = false;
                 record.ready = false;
                 record.sender = None;
+                if was_connected {
+                    ServiceMetrics::increment(&self.metrics.disconnect_count);
+                    info!(
+                        room_code = %room_code,
+                        session_id = %session_id,
+                        role = ?record.participant.role,
+                        "session_disconnected"
+                    );
+                }
 
                 if record.participant.role == ParticipantRole::Host {
                     close_targets.extend(room.active_senders_excluding(session_id));
@@ -358,6 +556,13 @@ impl RoomRegistry {
         }
 
         if should_remove {
+            ServiceMetrics::increment(&self.metrics.room_close_count);
+            info!(
+                room_code = %room_code,
+                session_id = %session_id,
+                reason = ?RoomCloseReason::HostDisconnected,
+                "room_closed"
+            );
             rooms.remove(room_code);
         }
         drop(rooms);
@@ -401,11 +606,13 @@ impl RoomRegistry {
             ClientMessage::ChatSend { id, text } => {
                 let trimmed = text.trim();
                 if trimmed.is_empty() || trimmed.len() > MAX_CHAT_LENGTH {
+                    ServiceMetrics::increment(&self.metrics.validation_failure_count);
                     return Err(AppError::Validation(
                         "chat messages must be between 1 and 500 characters".into(),
                     ));
                 }
                 if id.trim().is_empty() || id.len() > MAX_CHAT_ID_LENGTH {
+                    ServiceMetrics::increment(&self.metrics.validation_failure_count);
                     return Err(AppError::Validation(
                         "chat message id must be between 1 and 128 characters".into(),
                     ));
@@ -435,6 +642,13 @@ impl RoomRegistry {
                     room.remember_chat_message(chat_message.clone());
                     chat_message
                 };
+                ServiceMetrics::increment(&self.metrics.chat_message_count);
+                info!(
+                    room_code = %room_code,
+                    session_id = %session_id,
+                    chat_id = %chat_message.id,
+                    "chat_message_accepted"
+                );
                 self.broadcast(room_code, ServerMessage::Chat(chat_message));
                 Ok(())
             }
@@ -445,11 +659,16 @@ impl RoomRegistry {
                     room.host_session_id == *session_id
                 };
                 if !is_authorized {
+                    ServiceMetrics::increment(&self.metrics.unauthorized_message_count);
                     return Err(AppError::Unauthorized);
                 }
 
                 if let Some(url) = &command.stream_url {
-                    app_core::validation::validate_stream_url(url)?;
+                    if let Err(err) = app_core::validation::validate_stream_url(url) {
+                        ServiceMetrics::increment(&self.metrics.stream_validation_failure_count);
+                        ServiceMetrics::increment(&self.metrics.validation_failure_count);
+                        return Err(err);
+                    }
                 }
 
                 let command = {
@@ -463,6 +682,14 @@ impl RoomRegistry {
                     room.playback = apply_playback_command(room.playback.clone(), &command);
                     command
                 };
+                ServiceMetrics::increment(&self.metrics.playback_command_count);
+                info!(
+                    room_code = %room_code,
+                    session_id = %session_id,
+                    seq = command.seq,
+                    action = ?command.action,
+                    "playback_command_accepted"
+                );
                 self.broadcast(room_code, ServerMessage::Playback(command));
                 Ok(())
             }
@@ -473,11 +700,16 @@ impl RoomRegistry {
                     room.host_session_id == *session_id
                 };
                 if !is_authorized {
+                    ServiceMetrics::increment(&self.metrics.unauthorized_message_count);
                     return Err(AppError::Unauthorized);
                 }
 
                 if let Some(url) = &heartbeat.active_source {
-                    app_core::validation::validate_stream_url(url)?;
+                    if let Err(err) = app_core::validation::validate_stream_url(url) {
+                        ServiceMetrics::increment(&self.metrics.stream_validation_failure_count);
+                        ServiceMetrics::increment(&self.metrics.validation_failure_count);
+                        return Err(err);
+                    }
                 }
 
                 let heartbeat = {
@@ -487,11 +719,13 @@ impl RoomRegistry {
                         return Ok(());
                     }
                     if heartbeat.command_seq > room.last_sequence {
+                        ServiceMetrics::increment(&self.metrics.validation_failure_count);
                         return Err(AppError::Validation(
                             "heartbeat cannot advance playback sequence".into(),
                         ));
                     }
                     if room.playback.active_source != heartbeat.active_source {
+                        ServiceMetrics::increment(&self.metrics.validation_failure_count);
                         return Err(AppError::Validation(
                             "heartbeat source must match active room source".into(),
                         ));
@@ -500,6 +734,7 @@ impl RoomRegistry {
                     room.playback = apply_playback_heartbeat(room.playback.clone(), &heartbeat);
                     heartbeat
                 };
+                ServiceMetrics::increment(&self.metrics.playback_heartbeat_count);
                 self.broadcast(room_code, ServerMessage::PlaybackHeartbeat(heartbeat));
                 Ok(())
             }
@@ -511,6 +746,7 @@ impl RoomRegistry {
             let rooms = self.rooms.write();
             let room = rooms.get(room_code).ok_or(AppError::RoomNotFound)?;
             if room.host_session_id != *session_id {
+                ServiceMetrics::increment(&self.metrics.unauthorized_message_count);
                 return Err(AppError::Unauthorized);
             }
             room.active_senders()
@@ -519,6 +755,13 @@ impl RoomRegistry {
             let mut rooms = self.rooms.write();
             rooms.remove(room_code);
         }
+        ServiceMetrics::increment(&self.metrics.room_close_count);
+        info!(
+            room_code = %room_code,
+            session_id = %session_id,
+            reason = ?RoomCloseReason::ClosedByHost,
+            "room_closed"
+        );
 
         for sender in senders {
             let _ = sender.send(ServerMessage::RoomClosed {
@@ -539,7 +782,10 @@ impl RoomRegistry {
         };
 
         if let Some(sender) = sender {
-            let _ = sender.send(message);
+            ServiceMetrics::increment(&self.metrics.outbound_message_count);
+            if sender.send(message).is_err() {
+                ServiceMetrics::increment(&self.metrics.outbound_send_failure_count);
+            }
         }
     }
 
@@ -558,6 +804,13 @@ impl RoomRegistry {
 
         for room_code in expired {
             if let Some(room) = rooms.remove(&room_code) {
+                ServiceMetrics::increment(&self.metrics.room_expiration_count);
+                ServiceMetrics::increment(&self.metrics.room_close_count);
+                info!(
+                    room_code = %room_code,
+                    reason = ?RoomCloseReason::Expired,
+                    "room_closed"
+                );
                 for sender in room.active_senders() {
                     let _ = sender.send(ServerMessage::RoomClosed {
                         reason: RoomCloseReason::Expired,
@@ -594,6 +847,11 @@ impl RoomRegistry {
     }
 
     fn broadcast(&self, room_code: &RoomCode, message: ServerMessage) {
+        let started_at = Instant::now();
+        let is_playback_fanout = matches!(
+            &message,
+            ServerMessage::Playback(_) | ServerMessage::PlaybackHeartbeat(_)
+        );
         let senders = {
             let rooms = self.rooms.read();
             rooms
@@ -601,8 +859,30 @@ impl RoomRegistry {
                 .map(|room| room.active_senders())
                 .unwrap_or_default()
         };
+        let recipient_count = senders.len() as u64;
+        let mut failed_sends = 0_u64;
         for sender in senders {
-            let _ = sender.send(message.clone());
+            if sender.send(message.clone()).is_err() {
+                failed_sends += 1;
+            }
+        }
+
+        ServiceMetrics::add(&self.metrics.outbound_message_count, recipient_count);
+        if failed_sends > 0 {
+            ServiceMetrics::add(&self.metrics.outbound_send_failure_count, failed_sends);
+        }
+        if is_playback_fanout {
+            let elapsed_ms = started_at.elapsed().as_millis() as u64;
+            ServiceMetrics::increment(&self.metrics.playback_fanout_count);
+            ServiceMetrics::add(&self.metrics.playback_fanout_total_ms, elapsed_ms);
+            ServiceMetrics::record_max(&self.metrics.playback_fanout_max_ms, elapsed_ms);
+            info!(
+                room_code = %room_code,
+                recipient_count,
+                failed_sends,
+                elapsed_ms,
+                "playback_fanout_completed"
+            );
         }
     }
 }
@@ -696,6 +976,7 @@ struct ParticipantRecord {
     participant: Participant,
     ready: bool,
     sender: Option<mpsc::UnboundedSender<ServerMessage>>,
+    connection_count: u64,
 }
 
 impl ParticipantRecord {
@@ -704,6 +985,7 @@ impl ParticipantRecord {
             participant,
             ready: false,
             sender: None,
+            connection_count: 0,
         }
     }
 }

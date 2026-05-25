@@ -26,6 +26,8 @@ Define the networking strategy through Sprint 7, including when WebRTC is used a
 
 - If peer transport is unavailable or unreliable, use hosted signaling transport for room events
 - Chat, presence, and playback authority must continue working without peer transport
+- `GET /networking` exposes the active v1 network posture so clients and operators can verify that WebSocket signaling and direct client media fetch are the active model
+- The current endpoint reports WebRTC, STUN, and TURN as disabled until a future peer transport is deliberately introduced
 
 ## Network Failure Modes
 
@@ -39,3 +41,4 @@ Define the networking strategy through Sprint 7, including when WebRTC is used a
 - The product remains functional on plain WebSocket signaling alone
 - Future WebRTC adoption does not change the room-service media model
 - Fallback behavior is explicit and testable
+- The service exposes the active network model through a machine-readable endpoint

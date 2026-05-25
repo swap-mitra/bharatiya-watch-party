@@ -462,6 +462,9 @@ async fn duplicate_chat_ids_are_suppressed() {
         duplicate.is_none(),
         "duplicate chat id should not rebroadcast"
     );
+
+    let metrics = registry.metrics_snapshot();
+    assert_eq!(metrics.chat_message_count, 1);
 }
 
 #[tokio::test]
@@ -505,6 +508,71 @@ async fn reconnect_welcome_includes_recent_chat_history() {
         }
         _ => panic!("expected welcome message"),
     }
+}
+
+#[tokio::test]
+async fn full_room_playback_fanout_updates_metrics() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+
+    let mut viewer_receivers = Vec::new();
+    for index in 0..10 {
+        let viewer = registry
+            .reserve_viewer(
+                created.room_code.clone(),
+                JoinRoomRequest {
+                    display_name: format!("Viewer {}", index),
+                },
+            )
+            .expect("viewer should be reserved");
+        let (viewer_tx, viewer_rx) = mpsc::unbounded_channel();
+        registry
+            .connect(created.room_code.clone(), viewer.session_id, viewer_tx)
+            .expect("viewer should connect");
+        viewer_receivers.push(viewer_rx);
+    }
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &created.session_id,
+            ClientMessage::PlaybackCommand(PlaybackCommand {
+                seq: 1,
+                action: PlaybackAction::Play,
+                position_ms: None,
+                stream_url: None,
+                issued_at_ms: 10,
+            }),
+        )
+        .expect("host command should be accepted");
+
+    for viewer_rx in &mut viewer_receivers {
+        let playback = recv_until(
+            viewer_rx,
+            |message| matches!(message, ServerMessage::Playback(command) if command.seq == 1),
+        )
+        .await
+        .expect("viewer should receive playback command");
+        assert!(matches!(playback, ServerMessage::Playback(_)));
+    }
+
+    let metrics = registry.metrics_snapshot();
+    assert_eq!(metrics.room_create_count, 1);
+    assert_eq!(metrics.room_join_count, 10);
+    assert_eq!(metrics.active_room_count, 1);
+    assert_eq!(metrics.active_participant_count, 11);
+    assert_eq!(metrics.playback_command_count, 1);
+    assert_eq!(metrics.playback_fanout_count, 1);
+    assert!(metrics.outbound_message_count >= 11);
 }
 
 async fn recv_until(

@@ -11,6 +11,12 @@ Make room lifecycle, playback sync, reconnects, and failures observable enough t
 - Include room code and session ID where safe and useful
 - Log player adapter failures with normalized error categories
 
+## Implemented Logging Baseline
+
+- Signaling service logs room create, room join, WebSocket connect, reconnect, disconnect, room close, accepted chat messages, accepted playback commands, HTTP create/join latency, and playback fanout completion
+- Outbound serialization failures are logged as warnings
+- Logs remain console-based in development
+
 ## Metrics
 
 - Room creation count
@@ -21,6 +27,13 @@ Make room lifecycle, playback sync, reconnects, and failures observable enough t
 - Chat message count
 - Reconnect count
 - Room close reasons
+
+## Implemented Metrics Baseline
+
+- `RoomRegistry::metrics_snapshot()` returns in-process counters plus active room and participant gauges
+- `GET /metrics` exposes the same snapshot as JSON for local diagnostics and later scraping
+- Playback fanout count, total milliseconds, and max milliseconds are tracked for host command/heartbeat broadcasts
+- Unauthorized, validation, stream validation, outbound send, and outbound failure counters are tracked
 
 ## Sync-Specific Metrics
 

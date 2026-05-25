@@ -41,6 +41,11 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Host-authoritative playback heartbeats with conservative viewer drift correction and late-join timeline snapshots
 - Playback-rate smoothing for medium drift before falling back to seek correction
 - Duplicate-suppressed room chat with bounded recent-history replay for reconnecting and late-joining clients
+- Signaling service observability endpoints:
+  - `GET /metrics` for in-memory room, transport, chat, playback, validation, and fanout counters
+  - `GET /networking` for the active WebSocket/direct-media network posture
+- Structured service logs for room create/join/connect/disconnect/close, accepted chat, accepted playback commands, and playback fanout
+- Full-room backend fanout test covering one host plus ten viewers
 - Frontend sync policy extracted into `apps/desktop/src/lib/playbackSync.ts` so heartbeat and drift behavior can evolve independently of the UI shell
 - CI for Rust and frontend checks
 
@@ -66,6 +71,8 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - Host heartbeats, late-join sync, drift correction, playback-rate smoothing, and speed reset behavior are built.
 - Sprint 6: implemented in code
   - Text chat, presence, viewer reconnect, duplicate message suppression, and bounded chat replay are built.
+- Sprint 7: implemented in code
+  - Service metrics, networking posture endpoint, lifecycle/fanout logs, and 10-viewer backend fanout verification are built.
 
 ## Native Playback Notes
 
@@ -94,7 +101,8 @@ The browser fallback is intended for local development and smoke testing. It sup
 ## Current Gaps
 
 - Playback synchronization now has host heartbeats, playback-rate smoothing, and seek-based drift correction; measured threshold tuning is still pending
-- TURN/STUN, hosted fallback transport strategy, performance testing, and deeper observability are not implemented yet
+- TURN/STUN peer transport remains disabled by design in v1; WebSocket signaling and direct client media fetch are the active model
+- Production metrics export, hosted dashboards, frontend telemetry pipeline, and manual multi-client performance certification are still pending
 - Packaging and bundling of `libmpv` for distribution still needs to be finished for release builds
 
 ## Detailed Tracking

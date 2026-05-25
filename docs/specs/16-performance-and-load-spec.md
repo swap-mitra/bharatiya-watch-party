@@ -36,6 +36,12 @@ Define measurable performance expectations through Sprint 7 and Sprint 8.
 - Use manual and scripted desktop runs for UI responsiveness and playback command latency
 - Record measured values in the README or release notes once collected
 
+## Implemented Measurement Baseline
+
+- Backend integration tests create one host plus ten viewers and verify playback command fanout reaches every viewer
+- The same test asserts active room, active participant, join, playback command, fanout, and outbound message metrics
+- `/metrics` exposes playback fanout totals and max timing for local measurement during manual multi-client runs
+
 ## Acceptance Criteria
 
 - Full room size remains usable

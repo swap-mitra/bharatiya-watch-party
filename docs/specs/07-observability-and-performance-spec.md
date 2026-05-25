@@ -17,18 +17,25 @@
 - Player command failures
 - Stream validation failures
 
+## Implemented Metrics Surface
+
+- `GET /metrics` returns an in-memory service metrics snapshot
+- Metrics include room creates, joins, active rooms, active connected participants, WebSocket connects, reconnects, disconnects, room closes, room expirations, playback commands, playback heartbeats, chat messages, unauthorized messages, validation failures, stream validation failures, outbound sends, outbound send failures, and playback fanout timing totals/max
+- Metrics reset when the signaling service process restarts
+
 ## Logging Baseline
 
 - Structured Rust logs on the signaling service
 - Startup log for service bind address
 - Warnings for serialization failures on outbound messages
-- Future work: room/session correlation IDs and drift metrics
+- Room create, join, connect, disconnect, close, accepted chat, accepted playback command, and playback fanout logs include room/session context where useful
+- Future work: durable trace export and deeper drift metrics
 
 ## Current Gaps
 
-- No metrics sink yet
-- No tracing spans around room actions yet
-- No drift measurement because the sync engine is not implemented yet
+- No production metrics sink yet
+- No distributed tracing backend yet
+- Drift samples are not exported as service metrics yet
 - No frontend telemetry pipeline yet
 
 ## Performance Constraints For v1
