@@ -58,6 +58,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
 - Full-room backend fanout test covering one host plus ten viewers
 - Frontend sync policy extracted into `apps/desktop/src/lib/playbackSync.ts` so heartbeat and drift behavior can evolve independently of the UI shell
 - CI for Rust and frontend checks
+- GitHub Actions workflow runs on every push, pull request, and manual dispatch with Rust format/clippy/test plus frontend install/typecheck/lint/build
 
 ### Verified
 

@@ -1,75 +1,65 @@
-# Realtime Protocol Spec
-
-## Room Authority
-
-- Host is authoritative for playback state
-- Viewers may send presence, readiness, and chat events
-- Viewer playback mutation attempts must be rejected
-
-## Core Messages
-
-### Client to Server
-
-- Ping
-- ReadyState
-- ChatSend
-- PlaybackCommand
-
-### Server to Client
-
-- Welcome
-- Presence
-- Chat
-- Playback
-- Error
-- RoomClosed
-
-## Ordering
-
-- Playback commands carry a monotonic sequence number
-- Consumers ignore stale sequence numbers
-- Reconnect must preserve the last known session identity when the session token is valid
-
-## Lifecycle
-
-- Host creates room through HTTP
-- Each participant establishes a WebSocket session with a previously issued session token
-- Disconnect removes the participant from presence
-- Host disconnect closes the room and broadcasts RoomClosed
-"@ | Set-Content -NoNewline docs/specs/03-realtime-protocol-spec.md
-
-@"
 name: CI
 
 on:
   push:
-    branches: ["main", "codex/**"]
   pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   rust:
+    name: Rust checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - name: Format
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Linux desktop dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Check formatting
         run: cargo fmt --all -- --check
+
       - name: Lint
         run: cargo clippy --workspace --all-targets -- -D warnings
+
       - name: Test
         run: cargo test --workspace
 
   desktop:
+    name: Desktop frontend checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-      - name: Install
+
+      - name: Install dependencies
         run: npm ci
+
       - name: Typecheck
         run: npm run typecheck
+
       - name: Lint
         run: npm run lint
+
+      - name: Build frontend
+        run: npm run build --workspace @watchparty/desktop

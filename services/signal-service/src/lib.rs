@@ -529,29 +529,29 @@ impl RoomRegistry {
         let mut broadcast_snapshot = None;
         let mut close_targets = Vec::new();
 
-        if let Some(room) = rooms.get_mut(room_code) {
-            if let Some(record) = room.participants.get_mut(session_id) {
-                let was_connected = record.participant.connected || record.sender.is_some();
-                record.participant.connected = false;
-                record.ready = false;
-                record.sender = None;
-                if was_connected {
-                    ServiceMetrics::increment(&self.metrics.disconnect_count);
-                    info!(
-                        room_code = %room_code,
-                        session_id = %session_id,
-                        role = ?record.participant.role,
-                        "session_disconnected"
-                    );
-                }
+        if let Some(room) = rooms.get_mut(room_code)
+            && let Some(record) = room.participants.get_mut(session_id)
+        {
+            let was_connected = record.participant.connected || record.sender.is_some();
+            record.participant.connected = false;
+            record.ready = false;
+            record.sender = None;
+            if was_connected {
+                ServiceMetrics::increment(&self.metrics.disconnect_count);
+                info!(
+                    room_code = %room_code,
+                    session_id = %session_id,
+                    role = ?record.participant.role,
+                    "session_disconnected"
+                );
+            }
 
-                if record.participant.role == ParticipantRole::Host {
-                    close_targets.extend(room.active_senders_excluding(session_id));
-                    should_remove = true;
-                } else {
-                    room.touch(self.config.room_ttl);
-                    broadcast_snapshot = Some(room.snapshot(room_code.clone()));
-                }
+            if record.participant.role == ParticipantRole::Host {
+                close_targets.extend(room.active_senders_excluding(session_id));
+                should_remove = true;
+            } else {
+                room.touch(self.config.room_ttl);
+                broadcast_snapshot = Some(room.snapshot(room_code.clone()));
             }
         }
 
@@ -663,12 +663,12 @@ impl RoomRegistry {
                     return Err(AppError::Unauthorized);
                 }
 
-                if let Some(url) = &command.stream_url {
-                    if let Err(err) = app_core::validation::validate_stream_url(url) {
-                        ServiceMetrics::increment(&self.metrics.stream_validation_failure_count);
-                        ServiceMetrics::increment(&self.metrics.validation_failure_count);
-                        return Err(err);
-                    }
+                if let Some(url) = &command.stream_url
+                    && let Err(err) = app_core::validation::validate_stream_url(url)
+                {
+                    ServiceMetrics::increment(&self.metrics.stream_validation_failure_count);
+                    ServiceMetrics::increment(&self.metrics.validation_failure_count);
+                    return Err(err);
                 }
 
                 let command = {
@@ -704,12 +704,12 @@ impl RoomRegistry {
                     return Err(AppError::Unauthorized);
                 }
 
-                if let Some(url) = &heartbeat.active_source {
-                    if let Err(err) = app_core::validation::validate_stream_url(url) {
-                        ServiceMetrics::increment(&self.metrics.stream_validation_failure_count);
-                        ServiceMetrics::increment(&self.metrics.validation_failure_count);
-                        return Err(err);
-                    }
+                if let Some(url) = &heartbeat.active_source
+                    && let Err(err) = app_core::validation::validate_stream_url(url)
+                {
+                    ServiceMetrics::increment(&self.metrics.stream_validation_failure_count);
+                    ServiceMetrics::increment(&self.metrics.validation_failure_count);
+                    return Err(err);
                 }
 
                 let heartbeat = {
