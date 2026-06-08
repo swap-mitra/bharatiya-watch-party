@@ -918,81 +918,83 @@ function WatchPartyApp() {
                 </div>
               </div>
 
-              <label className="field">
-                <span>Direct media URL</span>
-                <input
-                  value={streamUrl}
-                  onChange={(event) => setStreamUrl(event.target.value)}
-                  disabled={!canOperatePlayer}
-                  placeholder="https://example.com/stream.m3u8"
-                />
-              </label>
-
-              <div className="control-row">
-                <button type="button" onClick={() => void dispatchPlayback('load_stream')} disabled={!canOperatePlayer}>
-                  Load
-                </button>
-                <button type="button" onClick={() => void dispatchPlayback('play')} disabled={!canOperatePlayer}>
-                  Play
-                </button>
-                <button type="button" onClick={() => void dispatchPlayback('pause')} disabled={!canOperatePlayer}>
-                  Pause
-                </button>
-                <button type="button" onClick={() => void dispatchPlayback('stop')} disabled={!canOperatePlayer}>
-                  Stop
-                </button>
-              </div>
-
-              <div className="control-grid">
-                <label className="field compact">
-                  <span>Seek position (ms)</span>
+              <section className="player-control-dock" aria-label="Playback controls">
+                <label className="field stream-field">
+                  <span>Stream URL</span>
                   <input
-                    type="number"
-                    value={seekValue}
-                    onChange={(event) => setSeekValue(Number(event.target.value))}
+                    value={streamUrl}
+                    onChange={(event) => setStreamUrl(event.target.value)}
                     disabled={!canOperatePlayer}
+                    placeholder="https://example.com/stream.m3u8"
                   />
                 </label>
-                <button
-                  type="button"
-                  className="secondary"
-                  onClick={() => void dispatchPlayback('seek')}
-                  disabled={!canOperatePlayer}
-                >
-                  Seek
-                </button>
-                <label className="field compact">
-                  <span>Audio track</span>
-                  <select
-                    value={playerState.selectedAudioTrack ?? ''}
-                    onChange={(event) => {
-                      void tauriPlayer.selectAudioTrack(event.target.value);
-                    }}
+
+                <div className="control-row transport-controls">
+                  <button type="button" onClick={() => void dispatchPlayback('load_stream')} disabled={!canOperatePlayer}>
+                    Load
+                  </button>
+                  <button type="button" onClick={() => void dispatchPlayback('play')} disabled={!canOperatePlayer}>
+                    Play
+                  </button>
+                  <button type="button" onClick={() => void dispatchPlayback('pause')} disabled={!canOperatePlayer}>
+                    Pause
+                  </button>
+                  <button type="button" onClick={() => void dispatchPlayback('stop')} disabled={!canOperatePlayer}>
+                    Stop
+                  </button>
+                </div>
+
+                <div className="control-grid track-controls">
+                  <label className="field compact">
+                    <span>Seek ms</span>
+                    <input
+                      type="number"
+                      value={seekValue}
+                      onChange={(event) => setSeekValue(Number(event.target.value))}
+                      disabled={!canOperatePlayer}
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void dispatchPlayback('seek')}
+                    disabled={!canOperatePlayer}
                   >
-                    {tracks.audio.map((track) => (
-                      <option key={track.id} value={track.id}>
-                        {track.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="field compact">
-                  <span>Subtitle track</span>
-                  <select
-                    value={subtitleValue}
-                    onChange={(event) => {
-                      void tauriPlayer.selectSubtitleTrack(event.target.value === 'none' ? null : event.target.value);
-                    }}
-                  >
-                    <option value="none">Off</option>
-                    {tracks.subtitles.map((track) => (
-                      <option key={track.id} value={track.id}>
-                        {track.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
+                    Seek
+                  </button>
+                  <label className="field compact">
+                    <span>Audio</span>
+                    <select
+                      value={playerState.selectedAudioTrack ?? ''}
+                      onChange={(event) => {
+                        void tauriPlayer.selectAudioTrack(event.target.value);
+                      }}
+                    >
+                      {tracks.audio.map((track) => (
+                        <option key={track.id} value={track.id}>
+                          {track.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field compact">
+                    <span>Subtitles</span>
+                    <select
+                      value={subtitleValue}
+                      onChange={(event) => {
+                        void tauriPlayer.selectSubtitleTrack(event.target.value === 'none' ? null : event.target.value);
+                      }}
+                    >
+                      <option value="none">Off</option>
+                      {tracks.subtitles.map((track) => (
+                        <option key={track.id} value={track.id}>
+                          {track.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+              </section>
             </div>
 
             <aside className="chat-panel room-rail">

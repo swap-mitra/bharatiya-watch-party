@@ -35,6 +35,7 @@ Cross-platform desktop watch party app for macOS and Windows with a Rust core, W
   - theater toggle colocated with the player
   - reduced diagnostics and nonessential copy in the main experience
   - muted dark palette, hard borders, and minimal accent color
+  - reduced room chrome and compact control dock so the player remains the dominant surface
 - UI resilience for room entry:
   - welcome payloads tolerate missing chat history from stale/local signal-service builds
   - React error boundary shows a recoverable app-level fault screen instead of the default crash page
