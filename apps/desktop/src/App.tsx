@@ -695,9 +695,13 @@ function WatchPartyApp() {
               </section>
             </div>
 
-            {playerWarning ? <p className="status-banner warning">{playerWarning}</p> : null}
+            {playerWarning ? (
+              <p className="status-banner warning" role="status">
+                {playerWarning}
+              </p>
+            ) : null}
             {roomError ? (
-              <section className="surface-callout error-state compact-state">
+              <section className="surface-callout error-state compact-state" role="alert" aria-live="assertive">
                 <p className="eyebrow">{roomErrorTitle}</p>
                 <h3>{roomError}</h3>
               </section>
@@ -836,7 +840,14 @@ function WatchPartyApp() {
               <span>{viewerCount}/{roomSession.maxViewers} viewers</span>
               <span>{readyCount} ready</span>
             </div>
-            <div className="readiness-meter" aria-label={`${readyCount} of ${participantCount} participants ready`}>
+            <div
+              className="readiness-meter"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={Math.max(participantCount, 1)}
+              aria-valuenow={readyCount}
+              aria-label={`${readyCount} of ${participantCount} participants ready`}
+            >
               <span style={{ width: `${readyPercent}%` }} />
             </div>
             <div className="summary-actions">
@@ -851,8 +862,16 @@ function WatchPartyApp() {
             </div>
           </section>
 
-          {playerWarning ? <p className="status-banner warning">{playerWarning}</p> : null}
-          {roomError ? <p className="status-banner error">{roomError}</p> : null}
+          {playerWarning ? (
+            <p className="status-banner warning" role="status">
+              {playerWarning}
+            </p>
+          ) : null}
+          {roomError ? (
+            <p className="status-banner error" role="alert" aria-live="assertive">
+              {roomError}
+            </p>
+          ) : null}
 
           {surfaceState !== 'Playing' && surfaceState !== 'Buffering' && surfaceState !== 'Loading' ? (
             <section className={`surface-callout ${surfaceState.toLowerCase()}-state`}>
@@ -877,10 +896,13 @@ function WatchPartyApp() {
                   <h2>{playerState.activeSource ? 'Watch surface' : 'Lobby stage'}</h2>
                 </div>
                 <div className="panel-actions">
-                  <span className={`status-pill ${playerState.status}`}>{statusLabel}</span>
+                  <span className={`status-pill ${playerState.status}`} aria-label={`Player status: ${statusLabel}`}>
+                    {statusLabel}
+                  </span>
                   <button
                     type="button"
                     className="mode-button"
+                    aria-pressed={mode === 'theater'}
                     onClick={() => setMode((current) => (current === 'standard' ? 'theater' : 'standard'))}
                   >
                     {mode === 'standard' ? 'Theater' : 'Standard'}
@@ -1035,7 +1057,7 @@ function WatchPartyApp() {
                 )}
               </section>
 
-              <section className="chat-messages live-chat">
+              <section className="chat-messages live-chat" aria-live="polite" aria-relevant="additions" aria-label="Room chat">
                 {chatMessages.length === 0 ? (
                   <article>
                     <strong>Room chat</strong>
@@ -1056,7 +1078,11 @@ function WatchPartyApp() {
               </section>
 
               <footer className="chat-input-row active-chat">
+                <label className="visually-hidden" htmlFor="chat-message-input">
+                  Chat message
+                </label>
                 <input
+                  id="chat-message-input"
                   value={chatDraft}
                   onChange={(event) => setChatDraft(event.target.value)}
                   placeholder="Send a message to the room"
@@ -1070,7 +1096,9 @@ function WatchPartyApp() {
                   disabled={!canSendChat}
                 />
                 <div className="chat-send-stack">
-                  <span className={chatTooLong ? 'over-limit' : ''}>{chatLength}/500</span>
+                  <span className={chatTooLong ? 'over-limit' : ''} aria-live="polite">
+                    {chatLength}/500
+                  </span>
                   <button type="button" className="secondary" onClick={sendChatMessage} disabled={!canSendChat || chatTooLong}>
                     Send
                   </button>
