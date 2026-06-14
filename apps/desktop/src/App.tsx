@@ -61,6 +61,7 @@ function WatchPartyApp() {
   const lastRoomCommandSeqRef = useRef(0);
   const lastSyncCorrectionAtRef = useRef(0);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const roomVideoRef = useRef<HTMLVideoElement | null>(null);
 
   const [playerState, setPlayerState] = useState<PlayerState>(initialPlayerState);
   const [tracks, setTracks] = useState<TrackCatalog>(initialTracks);
@@ -114,7 +115,7 @@ function WatchPartyApp() {
         pushEvent(`Heartbeat skipped: ${String(error)}`);
       }
     };
-  });
+  }, []);
 
   useEffect(() => {
     roomClosedReasonRef.current = roomClosedReason;
@@ -134,7 +135,8 @@ function WatchPartyApp() {
   }, [roomSession, transportState, roomClosedReason]);
 
   useEffect(() => {
-    registerWebPlayerElement(playerBackend === 'web-video' ? videoRef.current : null);
+    const activeElement = roomSession ? roomVideoRef.current : videoRef.current;
+    registerWebPlayerElement(playerBackend === 'web-video' ? activeElement : null);
     return () => registerWebPlayerElement(null);
   }, [playerBackend, roomSession]);
 
@@ -889,7 +891,7 @@ function WatchPartyApp() {
               <div className="player-stage cinematic">
                 {playerBackend === 'web-video' ? (
                   <video
-                    ref={videoRef}
+                    ref={roomVideoRef}
                     className={`video-surface ${playerState.activeSource ? 'active' : ''}`}
                     controls
                     playsInline
@@ -1058,7 +1060,7 @@ function WatchPartyApp() {
                   value={chatDraft}
                   onChange={(event) => setChatDraft(event.target.value)}
                   placeholder="Send a message to the room"
-                  maxLength={520}
+                  maxLength={500}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
                       event.preventDefault();

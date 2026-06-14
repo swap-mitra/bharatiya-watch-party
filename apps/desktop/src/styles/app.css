@@ -671,7 +671,15 @@ a {
     justify-items: stretch;
   }
 
-  button {
+  .action-pane button,
+  .control-row button,
+  .control-grid button,
+  .chat-send-stack button,
+  .summary-actions button,
+  .topbar-meta button,
+  .room-code-row button,
+  .surface-callout button,
+  .app-crash button {
     width: 100%;
   }
 }
