@@ -197,6 +197,12 @@ function WatchPartyApp() {
   const surfaceState = deriveSurfaceState(roomSession, transportState, roomClosedReason, playerState.status);
   const roomErrorTitle = roomError ? deriveRoomErrorTitle(roomError) : null;
   const readyPercent = participantCount > 0 ? Math.round((readyCount / participantCount) * 100) : 0;
+  const hasDuration = typeof playerState.durationMs === 'number' && playerState.durationMs > 0;
+  const positionLabel = formatTimecode(playerState.positionMs);
+  const durationLabel = hasDuration ? formatTimecode(playerState.durationMs as number) : null;
+  const progressPercent = hasDuration
+    ? Math.min(100, Math.max(0, (playerState.positionMs / (playerState.durationMs as number)) * 100))
+    : 0;
 
   async function handleCreateRoom() {
     if (createNameError) {
@@ -513,9 +519,12 @@ function WatchPartyApp() {
             positionMs: 0,
           });
           break;
-        case 'seek':
-          command = buildPlaybackCommand('seek', { positionMs: seekValue });
+        case 'seek': {
+          const maxSeek = hasDuration ? (playerState.durationMs as number) : Number.MAX_SAFE_INTEGER;
+          const safeSeek = Number.isFinite(seekValue) ? Math.min(Math.max(0, Math.round(seekValue)), maxSeek) : 0;
+          command = buildPlaybackCommand('seek', { positionMs: safeSeek });
           break;
+        }
         default:
           command = buildPlaybackCommand(action);
           break;
@@ -620,6 +629,7 @@ function WatchPartyApp() {
     setChatMessages([]);
     setSelfReady(false);
     setRoomError(null);
+    setMode('standard');
     pushEvent('Room left');
   }
 
@@ -733,7 +743,7 @@ function WatchPartyApp() {
                 <div className="stage-grid">
                   <div>
                     <p className="stage-label">Position</p>
-                    <p className="stage-value">{playerState.positionMs} ms</p>
+                    <p className="stage-value">{durationLabel ? `${positionLabel} / ${durationLabel}` : positionLabel}</p>
                   </div>
                   <div>
                     <p className="stage-label">Tracks</p>
@@ -777,8 +787,10 @@ function WatchPartyApp() {
                   <span>Seek position (ms)</span>
                   <input
                     type="number"
-                    value={seekValue}
-                    onChange={(event) => setSeekValue(Number(event.target.value))}
+                    min={0}
+                    step={1000}
+                    value={Number.isFinite(seekValue) ? seekValue : 0}
+                    onChange={(event) => setSeekValue(parseSeekInput(event.target.value))}
                   />
                 </label>
                 <button type="button" className="secondary" onClick={() => void dispatchPlayback('seek')}>
@@ -915,11 +927,21 @@ function WatchPartyApp() {
                   <video
                     ref={roomVideoRef}
                     className={`video-surface ${playerState.activeSource ? 'active' : ''}`}
-                    controls
+                    controls={canOperatePlayer}
                     playsInline
                     preload="metadata"
                   />
                 ) : null}
+                <div
+                  className="player-progress"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={hasDuration ? (playerState.durationMs as number) : 0}
+                  aria-valuenow={playerState.positionMs}
+                  aria-label={`Playback position ${positionLabel}${durationLabel ? ` of ${durationLabel}` : ''}`}
+                >
+                  <span style={{ width: `${progressPercent}%` }} />
+                </div>
                 <div>
                   <p className="stage-label">Source</p>
                   <p className="stage-value">{playerState.activeSource ?? 'Waiting for the host to load a direct media URL'}</p>
@@ -927,7 +949,7 @@ function WatchPartyApp() {
                 <div className="stage-grid">
                   <div>
                     <p className="stage-label">Position</p>
-                    <p className="stage-value">{playerState.positionMs} ms</p>
+                    <p className="stage-value">{durationLabel ? `${positionLabel} / ${durationLabel}` : positionLabel}</p>
                   </div>
                   <div>
                     <p className="stage-label">Tracks</p>
@@ -973,8 +995,10 @@ function WatchPartyApp() {
                     <span>Seek ms</span>
                     <input
                       type="number"
-                      value={seekValue}
-                      onChange={(event) => setSeekValue(Number(event.target.value))}
+                      min={0}
+                      step={1000}
+                      value={Number.isFinite(seekValue) ? seekValue : 0}
+                      onChange={(event) => setSeekValue(parseSeekInput(event.target.value))}
                       disabled={!canOperatePlayer}
                     />
                   </label>
@@ -993,7 +1017,9 @@ function WatchPartyApp() {
                       onChange={(event) => {
                         void tauriPlayer.selectAudioTrack(event.target.value);
                       }}
+                      disabled={tracks.audio.length === 0}
                     >
+                      <option value="">Default</option>
                       {tracks.audio.map((track) => (
                         <option key={track.id} value={track.id}>
                           {track.label}
@@ -1008,6 +1034,7 @@ function WatchPartyApp() {
                       onChange={(event) => {
                         void tauriPlayer.selectSubtitleTrack(event.target.value === 'none' ? null : event.target.value);
                       }}
+                      disabled={tracks.subtitles.length === 0}
                     >
                       <option value="none">Off</option>
                       {tracks.subtitles.map((track) => (
@@ -1099,7 +1126,12 @@ function WatchPartyApp() {
                   <span className={chatTooLong ? 'over-limit' : ''} aria-live="polite">
                     {chatLength}/500
                   </span>
-                  <button type="button" className="secondary" onClick={sendChatMessage} disabled={!canSendChat || chatTooLong}>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={sendChatMessage}
+                    disabled={!canSendChat || chatTooLong || chatLength === 0}
+                  >
                     Send
                   </button>
                 </div>
@@ -1148,6 +1180,23 @@ function buildRoomSession(session: CreateRoomResponse | JoinRoomResponse): RoomS
     role: session.role,
     maxViewers: session.maxViewers,
   };
+}
+
+function formatTimecode(positionMs: number): string {
+  const totalSeconds = Math.max(0, Math.floor((Number.isFinite(positionMs) ? positionMs : 0) / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const pad = (value: number) => value.toString().padStart(2, '0');
+  return hours > 0 ? `${hours}:${pad(minutes)}:${pad(seconds)}` : `${minutes}:${pad(seconds)}`;
+}
+
+function parseSeekInput(value: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.max(0, Math.round(parsed));
 }
 
 function createClientMessageId(): string {
