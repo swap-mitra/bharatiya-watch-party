@@ -29,6 +29,7 @@ use tower_http::cors::{Any, CorsLayer};
 use tracing::{info, warn};
 
 const DEFAULT_ROOM_TTL_SECONDS: u64 = 60 * 60 * 4;
+const DEFAULT_DISCONNECT_GRACE_SECONDS: u64 = 60;
 const MAX_CHAT_LENGTH: usize = 500;
 const MAX_CHAT_ID_LENGTH: usize = 128;
 const CHAT_HISTORY_LIMIT: usize = 50;
@@ -37,12 +38,14 @@ const RECENT_CHAT_ID_LIMIT: usize = 200;
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
     pub room_ttl: Duration,
+    pub disconnect_grace: Duration,
 }
 
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
             room_ttl: Duration::from_secs(DEFAULT_ROOM_TTL_SECONDS),
+            disconnect_grace: Duration::from_secs(DEFAULT_DISCONNECT_GRACE_SECONDS),
         }
     }
 }
@@ -499,6 +502,7 @@ impl RoomRegistry {
         participant.participant.connected = true;
         participant.sender = Some(sender);
         participant.connection_count += 1;
+        participant.disconnected_at_ms = None;
         room.touch(self.config.room_ttl);
         let snapshot = room.snapshot(room_code.clone());
         let playback = room.playback.clone();
@@ -534,7 +538,7 @@ impl RoomRegistry {
         {
             let was_connected = record.participant.connected || record.sender.is_some();
             record.participant.connected = false;
-            record.ready = false;
+            record.participant.ready = false;
             record.sender = None;
             if was_connected {
                 ServiceMetrics::increment(&self.metrics.disconnect_count);
@@ -550,6 +554,7 @@ impl RoomRegistry {
                 close_targets.extend(room.active_senders_excluding(session_id));
                 should_remove = true;
             } else {
+                record.disconnected_at_ms = Some(now_ms());
                 room.touch(self.config.room_ttl);
                 broadcast_snapshot = Some(room.snapshot(room_code.clone()));
             }
@@ -595,7 +600,6 @@ impl RoomRegistry {
                         .participants
                         .get_mut(session_id)
                         .ok_or(AppError::ParticipantNotFound)?;
-                    participant.ready = ready;
                     participant.participant.ready = ready;
                     room.touch(self.config.room_ttl);
                     room.snapshot(room_code.clone())
@@ -790,33 +794,81 @@ impl RoomRegistry {
     }
 
     pub fn sweep_expired(&self) {
-        let mut rooms = self.rooms.write();
-        let expired: Vec<_> = rooms
-            .iter()
-            .filter_map(|(room_code, room)| {
-                if room.expires_at_ms <= now_ms() {
-                    Some(room_code.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
+        let mut closed_room_senders: Vec<Vec<mpsc::UnboundedSender<ServerMessage>>> = Vec::new();
+        let mut evicted_snapshots: Vec<RoomCode> = Vec::new();
+        {
+            let mut rooms = self.rooms.write();
+            let now = now_ms();
+            let grace_ms = self.config.disconnect_grace.as_millis() as u64;
 
-        for room_code in expired {
-            if let Some(room) = rooms.remove(&room_code) {
-                ServiceMetrics::increment(&self.metrics.room_expiration_count);
-                ServiceMetrics::increment(&self.metrics.room_close_count);
-                info!(
-                    room_code = %room_code,
-                    reason = ?RoomCloseReason::Expired,
-                    "room_closed"
-                );
-                for sender in room.active_senders() {
-                    let _ = sender.send(ServerMessage::RoomClosed {
-                        reason: RoomCloseReason::Expired,
-                    });
+            let expired: Vec<_> = rooms
+                .iter()
+                .filter_map(|(room_code, room)| {
+                    if room.expires_at_ms <= now {
+                        Some(room_code.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for room_code in expired {
+                if let Some(room) = rooms.remove(&room_code) {
+                    ServiceMetrics::increment(&self.metrics.room_expiration_count);
+                    ServiceMetrics::increment(&self.metrics.room_close_count);
+                    info!(
+                        room_code = %room_code,
+                        reason = ?RoomCloseReason::Expired,
+                        "room_closed"
+                    );
+                    closed_room_senders.push(room.active_senders());
                 }
             }
+
+            for (room_code, room) in rooms.iter_mut() {
+                let evictable: Vec<SessionId> = room
+                    .participants
+                    .iter()
+                    .filter_map(|(id, record)| {
+                        let is_viewer = record.participant.role == ParticipantRole::Viewer;
+                        let past_grace = record
+                            .disconnected_at_ms
+                            .map(|at| now.saturating_sub(at) >= grace_ms)
+                            .unwrap_or(false);
+                        if is_viewer && past_grace {
+                            Some(*id)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if evictable.is_empty() {
+                    continue;
+                }
+
+                for session_id in &evictable {
+                    room.participants.remove(session_id);
+                    info!(
+                        room_code = %room_code,
+                        session_id = %session_id,
+                        "viewer_evicted_after_grace"
+                    );
+                }
+                evicted_snapshots.push(room_code.clone());
+            }
+        }
+
+        for senders in closed_room_senders {
+            for sender in senders {
+                let _ = sender.send(ServerMessage::RoomClosed {
+                    reason: RoomCloseReason::Expired,
+                });
+            }
+        }
+
+        for room_code in evicted_snapshots {
+            self.broadcast_room_snapshot(&room_code);
         }
     }
 
@@ -974,18 +1026,18 @@ impl RoomRecord {
 #[derive(Debug)]
 struct ParticipantRecord {
     participant: Participant,
-    ready: bool,
     sender: Option<mpsc::UnboundedSender<ServerMessage>>,
     connection_count: u64,
+    disconnected_at_ms: Option<u64>,
 }
 
 impl ParticipantRecord {
     fn new(participant: Participant) -> Self {
         Self {
             participant,
-            ready: false,
             sender: None,
             connection_count: 0,
+            disconnected_at_ms: None,
         }
     }
 }

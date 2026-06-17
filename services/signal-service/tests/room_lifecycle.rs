@@ -575,6 +575,110 @@ async fn full_room_playback_fanout_updates_metrics() {
     assert!(metrics.outbound_message_count >= 11);
 }
 
+#[tokio::test]
+async fn disconnect_resets_ready_in_presence_snapshot() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let viewer = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, mut host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, _viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), viewer.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &viewer.session_id,
+            ClientMessage::ReadyState { ready: true },
+        )
+        .expect("viewer should toggle ready");
+
+    registry.disconnect(&created.room_code, &viewer.session_id);
+
+    let presence = recv_until(&mut host_rx, |message| {
+        matches!(message, ServerMessage::Presence(snapshot)
+            if snapshot.participants.iter().any(|participant| !participant.connected))
+    })
+    .await
+    .expect("host should receive presence after disconnect");
+
+    if let ServerMessage::Presence(snapshot) = presence {
+        let viewer_record = snapshot
+            .participants
+            .iter()
+            .find(|participant| participant.session_id == viewer.session_id)
+            .expect("viewer should still be present");
+        assert!(!viewer_record.connected);
+        assert!(
+            !viewer_record.ready,
+            "ready flag must reset when a viewer disconnects"
+        );
+    } else {
+        panic!("expected presence message");
+    }
+}
+
+#[tokio::test]
+async fn disconnected_viewers_are_evicted_after_grace() {
+    let registry = RoomRegistry::new(ServiceConfig {
+        disconnect_grace: Duration::from_millis(0),
+        ..ServiceConfig::default()
+    });
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let viewer = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, _viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), viewer.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    assert_eq!(registry.metrics_snapshot().active_participant_count, 2);
+
+    registry.disconnect(&created.room_code, &viewer.session_id);
+    registry.sweep_expired();
+
+    // The viewer slot is freed, so a new viewer can reuse the same display name.
+    registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("freed slot and name should allow a new viewer");
+}
+
 async fn recv_until(
     receiver: &mut mpsc::UnboundedReceiver<ServerMessage>,
     predicate: impl Fn(&ServerMessage) -> bool,
