@@ -61,5 +61,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Test
+        run: npm test
+
       - name: Build frontend
         run: npm run build --workspace @watchparty/desktop
+
+      - name: Validate Tauri bundle config
+        run: npm run -w @watchparty/desktop tauri -- info

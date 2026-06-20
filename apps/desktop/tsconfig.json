@@ -1,7 +1,9 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "types": ["vite/client"]
+    "types": ["vite/client", "node"],
+    "allowImportingTsExtensions": true,
+    "noUncheckedSideEffectImports": false
   },
   "include": ["src", "vite.config.ts", "eslint.config.js"]
 }

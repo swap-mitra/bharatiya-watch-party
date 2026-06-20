@@ -725,16 +725,8 @@ fn load_mpv_library() -> AppResult<Library> {
         return unsafe { Library::new(path) }.map_err(|err| AppError::Transport(err.to_string()));
     }
 
-    let candidates = if cfg!(target_os = "windows") {
-        vec!["mpv-2.dll", "libmpv-2.dll", "mpv-1.dll"]
-    } else if cfg!(target_os = "macos") {
-        vec!["libmpv.2.dylib", "libmpv.dylib"]
-    } else {
-        vec!["libmpv.so.2", "libmpv.so"]
-    };
-
     let mut last_error = None;
-    for candidate in candidates {
+    for candidate in mpv_candidate_names() {
         match unsafe { Library::new(candidate) } {
             Ok(library) => return Ok(library),
             Err(error) => last_error = Some(error.to_string()),
@@ -744,6 +736,16 @@ fn load_mpv_library() -> AppResult<Library> {
     Err(AppError::Transport(last_error.unwrap_or_else(|| {
         "libmpv library could not be loaded".into()
     })))
+}
+
+fn mpv_candidate_names() -> Vec<&'static str> {
+    if cfg!(target_os = "windows") {
+        vec!["mpv-2.dll", "libmpv-2.dll", "mpv-1.dll"]
+    } else if cfg!(target_os = "macos") {
+        vec!["libmpv.2.dylib", "libmpv.dylib"]
+    } else {
+        vec!["libmpv.so.2", "libmpv.so"]
+    }
 }
 
 fn build_track_label(kind: MediaTrackKind, language: Option<&str>, id: &str) -> String {
@@ -975,5 +977,22 @@ mod tests {
 
         let tracks = player.tracks().await.expect("tracks should be available");
         assert!(!tracks.audio.is_empty());
+    }
+
+    #[test]
+    fn mpv_candidate_names_matches_platform() {
+        let candidates = mpv_candidate_names();
+        assert!(!candidates.is_empty(), "candidate list must not be empty");
+        let first = candidates[0];
+        if cfg!(target_os = "windows") {
+            assert_eq!(first, "mpv-2.dll");
+            assert_eq!(candidates, vec!["mpv-2.dll", "libmpv-2.dll", "mpv-1.dll"]);
+        } else if cfg!(target_os = "macos") {
+            assert_eq!(first, "libmpv.2.dylib");
+            assert_eq!(candidates, vec!["libmpv.2.dylib", "libmpv.dylib"]);
+        } else {
+            assert_eq!(first, "libmpv.so.2");
+            assert_eq!(candidates, vec!["libmpv.so.2", "libmpv.so"]);
+        }
     }
 }

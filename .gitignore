@@ -6,6 +6,12 @@ Thumbs.db
 *.log
 .vscode/
 .idea/
+.env
+.env.*
+!.env.example
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 apps/desktop/src-tauri/.tauri/
+/dist/
+/scripts/dist/
+/libmpv/

@@ -2,6 +2,13 @@
 name = "app-core"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["Bharatiya Watch Party Contributors"]
+description = "Shared domain types and validation for the Bharatiya Watch Party app"
+repository = "https://github.com/anomalyco/opencode"
+homepage = "https://github.com/anomalyco/opencode"
+readme = "../../README.md"
+publish = false
 
 [dependencies]
 async-trait = { workspace = true }

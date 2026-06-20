@@ -248,10 +248,67 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 npm run typecheck
 npm run lint
+npm test
 npm run desktop:build
 ```
 
-The Rust tests cover room create/join, presence, readiness, chat (including duplicate suppression and bounded replay), host-authoritative playback, viewer command rejection, reconnect with a stable session id, room closure, and a full-room fanout test of one host plus ten viewers. CI runs these on every push, pull request, and manual dispatch.
+Or run them all via the verification script (used by the release process):
+
+```powershell
+pwsh ./scripts/verify.ps1
+pwsh ./scripts/verify.ps1 -SkipBundle   # fast local feedback
+```
+
+The Rust tests cover room create/join, presence, readiness, chat (including duplicate suppression and bounded replay), host-authoritative playback, viewer command rejection, reconnect with a stable session id, room closure, a full-room fanout test of one host plus ten viewers, and the Sprint 8 release-critical configuration surface (`ServiceConfig::from_env`, `/networking`, `/health`). The frontend tests cover the public heartbeat/drift-correction API in `playbackSync.ts`. CI runs these on every push, pull request, and manual dispatch.
+
+## Packaging & Release (Sprint 8)
+
+Sprint 8 certifies the desktop app and signaling service for unsigned
+distribution. The shape of every release is fully scripted so a developer
+with a clean checkout can produce an artifact without any signing
+certificates, GitHub Actions secrets, or external services.
+
+Key documents:
+
+- [docs/release/RELEASE.md](docs/release/RELEASE.md) — the release process.
+- [docs/release/SUPPORT_MATRIX.md](docs/release/SUPPORT_MATRIX.md) — supported
+  OS versions, stream categories, and known limitations.
+- [docs/release/SIGNAL_SERVICE_DEPLOYMENT.md](docs/release/SIGNAL_SERVICE_DEPLOYMENT.md) —
+  how to run the signaling service in dev and production.
+- [docs/release/LIBMPV_BUNDLING.md](docs/release/LIBMPV_BUNDLING.md) — `libmpv`
+  discovery rules and bundling steps.
+- [docs/release/CONFIGURATION.md](docs/release/CONFIGURATION.md) — environment
+  variable reference for both processes.
+- [docs/release/RELEASE_NOTES_TEMPLATE.md](docs/release/RELEASE_NOTES_TEMPLATE.md) —
+  template for per-version release notes.
+- [docs/QA_ACCEPTANCE_MATRIX.md](docs/QA_ACCEPTANCE_MATRIX.md) — Sprint 8 exit
+  gate with automated and manual rows.
+
+Release scripts under `scripts/`:
+
+- `verify.ps1` — runs the full regression suite.
+- `build-desktop.ps1` — builds the desktop bundle (frontend + Tauri + libmpv).
+- `run-signal-service.ps1` — runs the signal service with optional `.env`
+  loading.
+- `check-libmpv.ps1` — dry-runs the libmpv discovery rules.
+- `bundle-libmpv.ps1` — copies libmpv next to the Tauri executable.
+- `package-signal-service.ps1` — packages the signal service binary for
+  release.
+
+Quick release sequence (unsigned):
+
+```powershell
+pwsh ./scripts/verify.ps1                    # full regression suite
+pwsh ./scripts/build-desktop.ps1             # build MSI/NSIS or APP/DMG
+pwsh ./scripts/package-signal-service.ps1 -Platform windows
+pwsh ./scripts/package-signal-service.ps1 -Platform macos
+pwsh ./scripts/package-signal-service.ps1 -Platform linux
+```
+
+The release artifacts are intentionally **unsigned** in v1. Windows
+SmartScreen may warn on first launch; macOS Gatekeeper will require
+right-click → Open. There is no auto-updater. Users re-download the
+release artifact to upgrade.
 
 ## Current Gaps
 

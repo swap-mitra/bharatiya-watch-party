@@ -30,24 +30,106 @@ use tracing::{info, warn};
 
 const DEFAULT_ROOM_TTL_SECONDS: u64 = 60 * 60 * 4;
 const DEFAULT_DISCONNECT_GRACE_SECONDS: u64 = 60;
+const DEFAULT_BIND_ADDR: &str = "0.0.0.0:4000";
 const MAX_CHAT_LENGTH: usize = 500;
 const MAX_CHAT_ID_LENGTH: usize = 128;
 const CHAT_HISTORY_LIMIT: usize = 50;
 const RECENT_CHAT_ID_LIMIT: usize = 200;
+const DEV_CORS_ORIGINS: &[&str] = &[
+    "http://localhost:1420",
+    "http://127.0.0.1:1420",
+    "http://tauri.localhost",
+    "tauri://localhost",
+    "https://tauri.localhost",
+];
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NetworkingConfig {
+    pub stun_urls: Vec<String>,
+    pub turn_urls: Vec<String>,
+    pub turn_username: Option<String>,
+    pub turn_credential_present: bool,
+}
 
 #[derive(Clone, Debug)]
 pub struct ServiceConfig {
+    pub bind_addr: String,
     pub room_ttl: Duration,
     pub disconnect_grace: Duration,
+    pub cors_allowed_origins: Vec<String>,
+    pub networking: NetworkingConfig,
 }
 
 impl Default for ServiceConfig {
     fn default() -> Self {
         Self {
+            bind_addr: DEFAULT_BIND_ADDR.to_string(),
             room_ttl: Duration::from_secs(DEFAULT_ROOM_TTL_SECONDS),
             disconnect_grace: Duration::from_secs(DEFAULT_DISCONNECT_GRACE_SECONDS),
+            cors_allowed_origins: DEV_CORS_ORIGINS
+                .iter()
+                .map(|value| value.to_string())
+                .collect(),
+            networking: NetworkingConfig::default(),
         }
     }
+}
+
+impl ServiceConfig {
+    pub fn from_env() -> Self {
+        let mut config = Self::default();
+        if let Ok(value) = std::env::var("BIND_ADDR") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                config.bind_addr = trimmed.to_string();
+            }
+        }
+        if let Ok(value) = std::env::var("ROOM_TTL_SECONDS")
+            && let Ok(parsed) = value.trim().parse::<u64>()
+        {
+            config.room_ttl = Duration::from_secs(parsed);
+        }
+        if let Ok(value) = std::env::var("DISCONNECT_GRACE_SECONDS")
+            && let Ok(parsed) = value.trim().parse::<u64>()
+        {
+            config.disconnect_grace = Duration::from_secs(parsed);
+        }
+        if let Ok(value) = std::env::var("CORS_ALLOWED_ORIGINS") {
+            let parsed = value
+                .split(',')
+                .map(|origin| origin.trim().to_string())
+                .filter(|origin| !origin.is_empty())
+                .collect::<Vec<_>>();
+            if !parsed.is_empty() {
+                config.cors_allowed_origins = parsed;
+            }
+        }
+        if let Ok(value) = std::env::var("STUN_URLS") {
+            config.networking.stun_urls = parse_csv(&value);
+        }
+        if let Ok(value) = std::env::var("TURN_URLS") {
+            config.networking.turn_urls = parse_csv(&value);
+        }
+        if let Ok(value) = std::env::var("TURN_USERNAME") {
+            let trimmed = value.trim();
+            if !trimmed.is_empty() {
+                config.networking.turn_username = Some(trimmed.to_string());
+            }
+        }
+        config.networking.turn_credential_present = std::env::var("TURN_CREDENTIAL")
+            .ok()
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false);
+        config
+    }
+}
+
+fn parse_csv(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(|entry| entry.trim().to_string())
+        .filter(|entry| !entry.is_empty())
+        .collect()
 }
 
 #[derive(Debug, Default)]
@@ -166,26 +248,47 @@ impl AppState {
 }
 
 pub fn app_router(state: AppState) -> Router {
+    app_router_with_config(state, ServiceConfig::default())
+}
+
+pub fn app_router_with_config(state: AppState, config: ServiceConfig) -> Router {
+    let mut allow_origin: Vec<HeaderValue> = Vec::with_capacity(config.cors_allowed_origins.len());
+    for origin in &config.cors_allowed_origins {
+        if let Ok(value) = HeaderValue::from_str(origin) {
+            allow_origin.push(value);
+        }
+    }
+    if allow_origin.is_empty() {
+        allow_origin.extend(
+            DEV_CORS_ORIGINS
+                .iter()
+                .filter_map(|origin| HeaderValue::from_str(origin).ok()),
+        );
+    }
+
     let cors = CorsLayer::new()
-        .allow_origin([
-            HeaderValue::from_static("http://localhost:1420"),
-            HeaderValue::from_static("http://127.0.0.1:1420"),
-            HeaderValue::from_static("http://tauri.localhost"),
-            HeaderValue::from_static("tauri://localhost"),
-            HeaderValue::from_static("https://tauri.localhost"),
-        ])
+        .allow_origin(allow_origin)
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
         .allow_headers(Any);
 
-    Router::new()
+    let app_routes = Router::new()
         .route("/health", get(healthcheck))
         .route("/metrics", get(metrics))
-        .route("/networking", get(networking))
         .route("/api/rooms", post(create_room))
         .route("/api/rooms/{room_code}/join", post(join_room))
         .route("/ws", get(ws_handler))
+        .with_state(state);
+
+    let networking_routes = Router::new()
+        .route("/networking", get(networking))
+        .with_state(NetworkingState {
+            snapshot: config.networking,
+        });
+
+    Router::new()
+        .merge(app_routes)
+        .merge(networking_routes)
         .layer(cors)
-        .with_state(state)
 }
 
 async fn healthcheck() -> impl IntoResponse {
@@ -196,15 +299,22 @@ async fn metrics(State(state): State<AppState>) -> impl IntoResponse {
     Json(state.registry.metrics_snapshot())
 }
 
-async fn networking() -> impl IntoResponse {
+async fn networking(State(state): State<NetworkingState>) -> impl IntoResponse {
     Json(NetworkingSnapshot {
         signaling_transport: "websocket",
         media_transport: "direct-client-fetch",
-        webrtc_enabled: false,
-        stun_configured: false,
-        turn_configured: false,
+        webrtc_enabled: !state.snapshot.stun_urls.is_empty()
+            || !state.snapshot.turn_urls.is_empty(),
+        stun_configured: !state.snapshot.stun_urls.is_empty(),
+        turn_configured: !state.snapshot.turn_urls.is_empty()
+            || state.snapshot.turn_credential_present,
         fallback_transport: "hosted-websocket-signaling",
     })
+}
+
+#[derive(Clone)]
+struct NetworkingState {
+    snapshot: NetworkingConfig,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -1135,7 +1245,9 @@ pub async fn run() -> AppResult<()> {
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
         .init();
 
-    let state = AppState::new(ServiceConfig::default());
+    let config = ServiceConfig::from_env();
+    let bind_addr = config.bind_addr.clone();
+    let state = AppState::new(config.clone());
     let registry = state.registry();
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(60));
@@ -1145,11 +1257,17 @@ pub async fn run() -> AppResult<()> {
         }
     });
 
-    let listener = tokio::net::TcpListener::bind("0.0.0.0:4000")
+    let listener = tokio::net::TcpListener::bind(&bind_addr)
         .await
         .map_err(|err| AppError::Transport(err.to_string()))?;
-    info!("signal-service listening on 0.0.0.0:4000");
-    axum::serve(listener, app_router(state))
+    info!(
+        bind_addr = %bind_addr,
+        room_ttl_seconds = config.room_ttl.as_secs(),
+        disconnect_grace_seconds = config.disconnect_grace.as_secs(),
+        cors_origins = config.cors_allowed_origins.len(),
+        "signal-service_listening"
+    );
+    axum::serve(listener, app_router_with_config(state, config))
         .await
         .map_err(|err| AppError::Transport(err.to_string()))
 }

@@ -2,6 +2,13 @@
 name = "desktop-shell"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+authors = ["Bharatiya Watch Party Contributors"]
+description = "Cross-platform desktop shell for the Bharatiya Watch Party app"
+repository = "https://github.com/anomalyco/opencode"
+homepage = "https://github.com/anomalyco/opencode"
+readme = "../../../README.md"
+publish = false
 
 [build-dependencies]
 tauri-build = { workspace = true }
@@ -18,3 +25,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
+
+[features]
+default = []
+# Allow unsigned developer builds without the libmpv runtime.
+mock-player = []

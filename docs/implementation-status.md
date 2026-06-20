@@ -30,8 +30,8 @@ Status key:
 | `14-turn-stun-and-networking-spec.md` | Partial | Baseline control plane uses WebSocket; media loads directly on each client; `GET /networking` exposes WebSocket/direct-media as active and WebRTC/STUN/TURN as disabled. | Future WebRTC signaling and configurable STUN/TURN relay behavior are pending and remain out of the active v1 path. |
 | `15-observability-implementation-spec.md` | Partial | Structured service logs cover room create, join, connect, reconnect, disconnect, close, chat, playback command, HTTP create/join latency, and playback fanout; `GET /metrics` exposes room, transport, chat, playback, validation, outbound, and fanout counters. | Production sink, distributed tracing, frontend telemetry, sync drift export, player failure categorization, and debug bundles are pending. |
 | `16-performance-and-load-spec.md` | Partial | Integration test verifies one host plus ten viewers receive playback fanout; metrics assert active participants, joins, playback commands, fanout, and outbound message counts. | Manual 10-viewer desktop load testing, latency measurements, CPU/memory profiling, burst regression thresholds, and recorded release values are pending. |
-| `17-packaging-and-release-spec.md` | Not started | Tauri bundle config exists as a scaffold. | Windows/macOS signing, installers, `libmpv` bundling, release artifacts, and release docs are pending. |
-| `18-qa-and-acceptance-spec.md` | Not started | Specs exist and baseline automated checks run. | End-to-end QA matrix, media acceptance, platform acceptance, network acceptance, and Sprint 8 exit certification are pending. |
+| `17-packaging-and-release-spec.md` | Partial | Tauri bundle config (`tauri.conf.json`) declares platform-specific MSI/NSIS (Windows) and APP/DMG (macOS) outputs without code signing; release docs (`docs/release/RELEASE.md`, `SUPPORT_MATRIX.md`, `RELEASE_NOTES_TEMPLATE.md`, `SIGNAL_SERVICE_DEPLOYMENT.md`, `LIBMPV_BUNDLING.md`, `CONFIGURATION.md`) define the unsigned release process; `scripts/verify.ps1`, `build-desktop.ps1`, `package-signal-service.ps1`, `bundle-libmpv.ps1`, and `check-libmpv.ps1` script the workflow. | Production code signing, notarization, and signed auto-updater are intentionally out of v1 scope per the Sprint 8 exit criteria. |
+| `18-qa-and-acceptance-spec.md` | Partial | `docs/QA_ACCEPTANCE_MATRIX.md` defines the functional, media, platform, network, and regression matrix; Rust tests cover the config/networking release-critical surface; frontend tests cover `playbackSync`; `verify.ps1` runs the automated regression suite end-to-end. | Manual media/platform/network certifications are recorded per release in `docs/release/RELEASE_NOTES_<version>.md`. |
 
 ## Sprint-Level Reality
 
@@ -44,12 +44,12 @@ Status key:
 | Sprint 5 | Implemented | Host heartbeats, late-join playback snapshots, seek correction, playback-rate smoothing, correction throttling, and sync speed reset are in code. Multi-client tuning moves to Sprint 8 QA/performance. |
 | Sprint 6 | Implemented | Text chat, presence, readiness, viewer reconnect, duplicate chat suppression, bounded reconnect/late-join chat replay, and host reconnect grace with sweep-based room close are in code. |
 | Sprint 7 | Implemented | Service metrics, networking posture endpoint, structured lifecycle/fanout logs, and one-host-plus-ten-viewer backend fanout verification are in code. Production dashboards and manual certification move to Sprint 8 QA/release work. |
-| Sprint 8 | Not started | Packaging, signing, release matrix, and QA certification are not implemented. |
+| Sprint 8 | Partial | Tauri bundle config declares unsigned MSI/NSIS (Windows) and APP/DMG (macOS) outputs; release process docs, support matrix, signal-service deployment, libmpv bundling, configuration reference, and release notes template are written; `scripts/verify.ps1`, `build-desktop.ps1`, `package-signal-service.ps1`, `check-libmpv.ps1`, and `bundle-libmpv.ps1` script the workflow; `ServiceConfig::from_env` exposes BIND_ADDR, ROOM_TTL_SECONDS, DISCONNECT_GRACE_SECONDS, CORS_ALLOWED_ORIGINS, and reserved STUN/TURN env vars with tests; `/networking` reflects the env config; frontend tests cover `playbackSync`. | Manual media/platform/network certification runs (Windows + macOS) are recorded in per-version release notes; code signing, notarization, and signed auto-updater are intentionally out of v1 scope. |
 
 ## Highest-Priority Remaining Work
 
-1. Continue Sprint 8 in order: packaging, signing, release matrix, and QA certification.
+1. Run manual certification of `docs/QA_ACCEPTANCE_MATRIX.md` on real Windows and macOS hosts; record outcomes in the per-version release notes.
 2. Run 2-client and 10-viewer desktop sync/load tests and tune heartbeat correction thresholds.
-3. Package and bundle `libmpv` for Windows and macOS during Sprint 8 release work.
+3. Package and bundle `libmpv` for Windows and macOS during a real release run via `scripts/bundle-libmpv.ps1`.
 4. Add production metrics export/dashboard wiring if a hosting target is chosen.
-5. Execute the QA acceptance matrix from `18-qa-and-acceptance-spec.md`.
+5. Production code signing (Windows Authenticode, macOS notarization) and signed auto-updater artifacts, when a certificate is available.

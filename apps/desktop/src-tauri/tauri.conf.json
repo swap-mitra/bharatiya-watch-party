@@ -12,10 +12,14 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Bharatiya Watch Party",
         "width": 1440,
         "height": 960,
-        "resizable": true
+        "minWidth": 960,
+        "minHeight": 640,
+        "resizable": true,
+        "fullscreen": false
       }
     ],
     "security": {
@@ -24,12 +28,43 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "msi", "dmg"],
+    "targets": "all",
+    "category": "Entertainment",
+    "shortDescription": "Watch the same stream together, in sync",
+    "longDescription": "Bharatiya Watch Party is a cross-platform desktop app for watching the same stream together, in sync. A host loads a direct media URL and drives playback; viewers join with a room code and follow a single shared timeline.",
+    "publisher": "Bharatiya Watch Party Contributors",
+    "homepage": "https://github.com/anomalyco/opencode",
+    "createUpdaterArtifacts": false,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "wix": {
+        "language": "en-US",
+        "version": "0.1.0"
+      },
+      "nsis": {
+        "installMode": "currentUser",
+        "displayLanguageSelector": false,
+        "languages": ["English"]
+      }
+    },
+    "macOS": {
+      "frameworks": [],
+      "minimumSystemVersion": "10.15",
+      "exceptionDomain": "127.0.0.1",
+      "signingIdentity": null,
+      "providerShortName": null,
+      "entitlements": null,
+      "dmg": {
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      }
+    }
   }
 }

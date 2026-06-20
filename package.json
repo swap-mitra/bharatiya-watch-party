@@ -8,7 +8,18 @@
   "scripts": {
     "lint": "npm run lint --workspace @watchparty/desktop",
     "typecheck": "npm run typecheck --workspace @watchparty/desktop",
+    "test": "npm run test --workspaces --if-present",
+    "verify": "pwsh ./scripts/verify.ps1",
+    "verify:fast": "pwsh ./scripts/verify.ps1 -SkipBundle",
     "desktop:dev": "npm run tauri dev --workspace @watchparty/desktop",
-    "desktop:build": "npm run tauri build --workspace @watchparty/desktop"
+    "desktop:build": "npm run tauri build --workspace @watchparty/desktop",
+    "desktop:build:script": "pwsh ./scripts/build-desktop.ps1",
+    "signal:run": "pwsh ./scripts/run-signal-service.ps1",
+    "signal:package": "pwsh ./scripts/package-signal-service.ps1",
+    "libmpv:check": "pwsh ./scripts/check-libmpv.ps1",
+    "libmpv:bundle": "pwsh ./scripts/bundle-libmpv.ps1",
+    "release:verify": "pwsh ./scripts/verify.ps1",
+    "release:build": "pwsh ./scripts/build-desktop.ps1",
+    "release:signal": "pwsh ./scripts/package-signal-service.ps1"
   }
 }
