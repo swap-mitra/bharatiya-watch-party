@@ -24,7 +24,7 @@ Status key:
 | `08-test-spec.md` | Partial | Rust unit/integration tests cover protocol, validation, room lifecycle, host authorization, reconnect, heartbeat behavior, duplicate chat suppression, chat replay, metrics, and 10-viewer playback fanout; frontend typecheck/lint/build pass. | Desktop/player integration tests, UI tests, sync drift tests, broader load tests, and manual media certification are pending. |
 | `09-room-experience-spec.md` | Partial | Host/viewer room flows, room code sharing, validated join flow, lobby, readiness, active room, authority messaging, chat, reconnecting, and closed-room surfaces exist. | Full UX QA across edge cases and multi-client manual testing are pending. |
 | `10-libmpv-integration-spec.md` | Partial | Dynamic `libmpv` loading, native commands, state polling, track discovery, and track selection exist. | Cross-platform library bundling, installer integration, and media matrix certification are pending. |
-| `11-session-and-reconnect-spec.md` | Partial | Viewer reconnect with same session id exists; reconnect UI state exists; room close handling exists; reconnect welcome payloads replay recent chat history. | Host reconnect grace period is not implemented; host disconnect currently closes the room. |
+| `11-session-and-reconnect-spec.md` | Implemented | Viewer reconnect with same session id, host reconnect grace using `disconnect_grace`, room close on host grace expiry, presence reflects host disconnect/reconnect within grace, reconnect welcome payloads replay recent chat history, host authority restored on reconnect all exist with test coverage. | Persistent multi-session resume and cross-device session migration are intentionally out of v1 scope. |
 | `12-sync-correction-spec.md` | Partial | Host heartbeats, seek correction, playback-rate smoothing, jitter bounds, and correction throttling exist in `apps/desktop/src/lib/playbackSync.ts`. | Measured threshold tuning and multi-client certification are pending. |
 | `13-chat-and-presence-spec.md` | Implemented | Text chat, presence list, readiness, connected/offline participant state, 500-character chat validation, client message IDs, server duplicate suppression, frontend duplicate merge, and bounded chat replay exist. | Persistent chat history, delivery receipts, and moderation are intentionally out of v1 scope. |
 | `14-turn-stun-and-networking-spec.md` | Partial | Baseline control plane uses WebSocket; media loads directly on each client; `GET /networking` exposes WebSocket/direct-media as active and WebRTC/STUN/TURN as disabled. | Future WebRTC signaling and configurable STUN/TURN relay behavior are pending and remain out of the active v1 path. |
@@ -42,7 +42,7 @@ Status key:
 | Sprint 3 | Implemented | Native player foundation, Tauri commands/events, dynamic `libmpv`, browser fallback, track controls, and local playback harness are in code. Release-grade `libmpv` bundling moves to Sprint 8. |
 | Sprint 4 | Implemented | Watch-room UI, create/join validation, room code sharing, lobby readiness, standard/theater layouts, compact chat constraints, host/viewer authority states, and reconnect/closed surfaces are in code. Manual multi-client UX certification moves to Sprint 8 QA. |
 | Sprint 5 | Implemented | Host heartbeats, late-join playback snapshots, seek correction, playback-rate smoothing, correction throttling, and sync speed reset are in code. Multi-client tuning moves to Sprint 8 QA/performance. |
-| Sprint 6 | Implemented | Text chat, presence, readiness, viewer reconnect, duplicate chat suppression, and bounded reconnect/late-join chat replay are in code. Host reconnect grace remains tracked under session/reconnect follow-up work. |
+| Sprint 6 | Implemented | Text chat, presence, readiness, viewer reconnect, duplicate chat suppression, bounded reconnect/late-join chat replay, and host reconnect grace with sweep-based room close are in code. |
 | Sprint 7 | Implemented | Service metrics, networking posture endpoint, structured lifecycle/fanout logs, and one-host-plus-ten-viewer backend fanout verification are in code. Production dashboards and manual certification move to Sprint 8 QA/release work. |
 | Sprint 8 | Not started | Packaging, signing, release matrix, and QA certification are not implemented. |
 
@@ -52,5 +52,4 @@ Status key:
 2. Run 2-client and 10-viewer desktop sync/load tests and tune heartbeat correction thresholds.
 3. Package and bundle `libmpv` for Windows and macOS during Sprint 8 release work.
 4. Add production metrics export/dashboard wiring if a hosting target is chosen.
-5. Add host reconnect grace period instead of closing the room immediately on host disconnect.
-6. Execute the QA acceptance matrix from `18-qa-and-acceptance-spec.md`.
+5. Execute the QA acceptance matrix from `18-qa-and-acceptance-spec.md`.

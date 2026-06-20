@@ -529,56 +529,42 @@ impl RoomRegistry {
 
     pub fn disconnect(&self, room_code: &RoomCode, session_id: &SessionId) {
         let mut rooms = self.rooms.write();
-        let mut should_remove = false;
-        let mut broadcast_snapshot = None;
-        let mut close_targets = Vec::new();
+        let mut disconnected = false;
+        let mut was_connected = false;
 
         if let Some(room) = rooms.get_mut(room_code)
             && let Some(record) = room.participants.get_mut(session_id)
         {
-            let was_connected = record.participant.connected || record.sender.is_some();
+            was_connected = record.participant.connected || record.sender.is_some();
             record.participant.connected = false;
             record.participant.ready = false;
             record.sender = None;
-            if was_connected {
-                ServiceMetrics::increment(&self.metrics.disconnect_count);
-                info!(
-                    room_code = %room_code,
-                    session_id = %session_id,
-                    role = ?record.participant.role,
-                    "session_disconnected"
-                );
-            }
+            record.disconnected_at_ms = Some(now_ms());
+            disconnected = true;
+        }
 
-            if record.participant.role == ParticipantRole::Host {
-                close_targets.extend(room.active_senders_excluding(session_id));
-                should_remove = true;
-            } else {
-                record.disconnected_at_ms = Some(now_ms());
+        let broadcast_snapshot = if disconnected {
+            if let Some(room) = rooms.get_mut(room_code) {
                 room.touch(self.config.room_ttl);
-                broadcast_snapshot = Some(room.snapshot(room_code.clone()));
+                if was_connected {
+                    ServiceMetrics::increment(&self.metrics.disconnect_count);
+                    info!(
+                        room_code = %room_code,
+                        session_id = %session_id,
+                        "session_disconnected"
+                    );
+                }
+                Some(room.snapshot(room_code.clone()))
+            } else {
+                None
             }
-        }
+        } else {
+            None
+        };
 
-        if should_remove {
-            ServiceMetrics::increment(&self.metrics.room_close_count);
-            info!(
-                room_code = %room_code,
-                session_id = %session_id,
-                reason = ?RoomCloseReason::HostDisconnected,
-                "room_closed"
-            );
-            rooms.remove(room_code);
-        }
         drop(rooms);
 
-        if should_remove {
-            for sender in close_targets {
-                let _ = sender.send(ServerMessage::RoomClosed {
-                    reason: RoomCloseReason::HostDisconnected,
-                });
-            }
-        } else if let Some(snapshot) = broadcast_snapshot {
+        if let Some(snapshot) = broadcast_snapshot {
             self.broadcast(room_code, ServerMessage::Presence(snapshot));
         }
     }
@@ -795,6 +781,10 @@ impl RoomRegistry {
 
     pub fn sweep_expired(&self) {
         let mut closed_room_senders: Vec<Vec<mpsc::UnboundedSender<ServerMessage>>> = Vec::new();
+        let mut host_grace_expired_rooms: Vec<(
+            RoomCode,
+            Vec<mpsc::UnboundedSender<ServerMessage>>,
+        )> = Vec::new();
         let mut evicted_snapshots: Vec<RoomCode> = Vec::new();
         {
             let mut rooms = self.rooms.write();
@@ -822,6 +812,35 @@ impl RoomRegistry {
                         "room_closed"
                     );
                     closed_room_senders.push(room.active_senders());
+                }
+            }
+
+            let host_grace_expired: Vec<RoomCode> = rooms
+                .iter()
+                .filter_map(|(room_code, room)| {
+                    let host_past_grace = room
+                        .participants
+                        .get(&room.host_session_id)
+                        .and_then(|host| host.disconnected_at_ms)
+                        .map(|at| now.saturating_sub(at) >= grace_ms)
+                        .unwrap_or(false);
+                    if host_past_grace {
+                        Some(room_code.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for room_code in host_grace_expired {
+                if let Some(room) = rooms.remove(&room_code) {
+                    ServiceMetrics::increment(&self.metrics.room_close_count);
+                    info!(
+                        room_code = %room_code,
+                        reason = ?RoomCloseReason::HostDisconnected,
+                        "room_closed"
+                    );
+                    host_grace_expired_rooms.push((room_code, room.active_senders()));
                 }
             }
 
@@ -863,6 +882,14 @@ impl RoomRegistry {
             for sender in senders {
                 let _ = sender.send(ServerMessage::RoomClosed {
                     reason: RoomCloseReason::Expired,
+                });
+            }
+        }
+
+        for (_room_code, senders) in host_grace_expired_rooms {
+            for sender in senders {
+                let _ = sender.send(ServerMessage::RoomClosed {
+                    reason: RoomCloseReason::HostDisconnected,
                 });
             }
         }
@@ -1003,22 +1030,6 @@ impl RoomRecord {
         self.participants
             .values()
             .filter_map(|participant| participant.sender.clone())
-            .collect()
-    }
-
-    fn active_senders_excluding(
-        &self,
-        exclude: &SessionId,
-    ) -> Vec<mpsc::UnboundedSender<ServerMessage>> {
-        self.participants
-            .iter()
-            .filter_map(|(session_id, participant)| {
-                if session_id == exclude {
-                    None
-                } else {
-                    participant.sender.clone()
-                }
-            })
             .collect()
     }
 }

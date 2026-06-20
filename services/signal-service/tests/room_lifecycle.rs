@@ -263,7 +263,10 @@ async fn host_heartbeat_cannot_replace_load_stream_command() {
 
 #[tokio::test]
 async fn host_disconnect_closes_the_room() {
-    let registry = RoomRegistry::new(ServiceConfig::default());
+    let registry = RoomRegistry::new(ServiceConfig {
+        disconnect_grace: Duration::from_millis(0),
+        ..ServiceConfig::default()
+    });
     let created = registry
         .create_room(CreateRoomRequest {
             display_name: "Host".into(),
@@ -288,6 +291,7 @@ async fn host_disconnect_closes_the_room() {
         .expect("viewer should connect");
 
     registry.disconnect(&created.room_code, &created.session_id);
+    registry.sweep_expired();
 
     let closed = recv_until(&mut viewer_rx, |message| {
         matches!(
@@ -373,6 +377,242 @@ async fn host_can_close_room_explicitly() {
         ServerMessage::RoomClosed {
             reason: RoomCloseReason::ClosedByHost,
         }
+    );
+}
+
+#[tokio::test]
+async fn host_disconnect_keeps_room_open_within_grace() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let joined = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), joined.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    registry.disconnect(&created.room_code, &created.session_id);
+
+    let presence = recv_until(&mut viewer_rx, |message| {
+        matches!(
+            message,
+            ServerMessage::Presence(snapshot)
+                if snapshot
+                    .participants
+                    .iter()
+                    .any(|participant| participant.session_id == created.session_id && !participant.connected)
+        )
+    })
+    .await
+    .expect("viewer should receive presence with host disconnected");
+
+    if let ServerMessage::Presence(snapshot) = presence {
+        let host = snapshot
+            .participants
+            .iter()
+            .find(|participant| participant.session_id == created.session_id)
+            .expect("host should still be present");
+        assert!(
+            !host.connected,
+            "host should be marked disconnected in grace"
+        );
+    } else {
+        panic!("expected presence message");
+    }
+
+    let room_still_open = recv_until(&mut viewer_rx, |message| {
+        matches!(message, ServerMessage::RoomClosed { .. })
+    })
+    .await;
+    assert!(
+        room_still_open.is_none(),
+        "room must not close while host is within grace"
+    );
+
+    assert_eq!(registry.metrics_snapshot().active_room_count, 1);
+}
+
+#[tokio::test]
+async fn host_reconnect_within_grace_restores_authority() {
+    let registry = RoomRegistry::new(ServiceConfig::default());
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let joined = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), joined.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    registry.disconnect(&created.room_code, &created.session_id);
+
+    let _ = recv_until(&mut viewer_rx, |message| {
+        matches!(
+            message,
+            ServerMessage::Presence(snapshot)
+                if snapshot
+                    .participants
+                    .iter()
+                    .any(|participant| participant.session_id == created.session_id && !participant.connected)
+        )
+    })
+    .await
+    .expect("viewer should receive host-disconnected presence");
+
+    let (host_tx2, mut host_rx2) = mpsc::unbounded_channel();
+    let welcome = registry
+        .connect(created.room_code.clone(), created.session_id, host_tx2)
+        .expect("host should reconnect within grace");
+
+    match welcome {
+        ServerMessage::Welcome {
+            self_session_id, ..
+        } => assert_eq!(self_session_id, created.session_id),
+        _ => panic!("expected welcome message"),
+    }
+
+    let presence = recv_until(&mut viewer_rx, |message| {
+        matches!(
+            message,
+            ServerMessage::Presence(snapshot)
+                if snapshot
+                    .participants
+                    .iter()
+                    .any(|participant| participant.session_id == created.session_id && participant.connected)
+        )
+    })
+    .await
+    .expect("viewer should receive host-reconnected presence");
+
+    if let ServerMessage::Presence(snapshot) = presence {
+        let host = snapshot
+            .participants
+            .iter()
+            .find(|participant| participant.session_id == created.session_id)
+            .expect("host should be present");
+        assert!(
+            host.connected,
+            "host should be marked connected after reconnect"
+        );
+    } else {
+        panic!("expected presence message");
+    }
+
+    registry
+        .handle_client_message(
+            &created.room_code,
+            &created.session_id,
+            ClientMessage::PlaybackCommand(PlaybackCommand {
+                seq: 1,
+                action: PlaybackAction::LoadStream,
+                position_ms: Some(0),
+                stream_url: Some("https://example.com/movie.mp4".into()),
+                issued_at_ms: 10,
+            }),
+        )
+        .expect("host playback command should be accepted after reconnect");
+
+    let playback = recv_until(
+        &mut host_rx2,
+        |message| matches!(message, ServerMessage::Playback(command) if command.seq == 1),
+    )
+    .await
+    .expect("reconnected host should receive its own playback command");
+
+    assert!(matches!(
+        playback,
+        ServerMessage::Playback(PlaybackCommand {
+            seq: 1,
+            action: PlaybackAction::LoadStream,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn host_disconnect_closes_room_after_grace_expires() {
+    let registry = RoomRegistry::new(ServiceConfig {
+        disconnect_grace: Duration::from_millis(0),
+        ..ServiceConfig::default()
+    });
+    let created = registry
+        .create_room(CreateRoomRequest {
+            display_name: "Host".into(),
+        })
+        .expect("room should be created");
+    let joined = registry
+        .reserve_viewer(
+            created.room_code.clone(),
+            JoinRoomRequest {
+                display_name: "Viewer".into(),
+            },
+        )
+        .expect("viewer should join");
+
+    let (host_tx, _host_rx) = mpsc::unbounded_channel();
+    let (viewer_tx, mut viewer_rx) = mpsc::unbounded_channel();
+    registry
+        .connect(created.room_code.clone(), created.session_id, host_tx)
+        .expect("host should connect");
+    registry
+        .connect(created.room_code.clone(), joined.session_id, viewer_tx)
+        .expect("viewer should connect");
+
+    assert_eq!(registry.metrics_snapshot().active_room_count, 1);
+
+    registry.disconnect(&created.room_code, &created.session_id);
+    registry.sweep_expired();
+
+    let closed = recv_until(&mut viewer_rx, |message| {
+        matches!(
+            message,
+            ServerMessage::RoomClosed {
+                reason: RoomCloseReason::HostDisconnected
+            }
+        )
+    })
+    .await
+    .expect("viewer should receive room closed after host grace expires");
+    assert_eq!(
+        closed,
+        ServerMessage::RoomClosed {
+            reason: RoomCloseReason::HostDisconnected,
+        }
+    );
+
+    assert_eq!(registry.metrics_snapshot().active_room_count, 0);
+    assert!(
+        registry.metrics_snapshot().room_close_count >= 1,
+        "room close metric should increment on host grace expiry"
     );
 }
 
